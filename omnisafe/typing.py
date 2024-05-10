@@ -29,13 +29,13 @@ from typing import (
 )
 
 import torch
-from gymnasium.spaces import Box, Discrete
+from gymnasium.spaces import Box, Discrete, Tuple
 from torch.types import Device
 
 
 RenderFrame = TypeVar('RenderFrame')
-OmnisafeSpace = Union[Box, Discrete]
-Activation = Literal['identity', 'relu', 'sigmoid', 'softplus', 'tanh']
+OmnisafeSpace = Union[Box, Discrete, Tuple]
+Activation = Literal['identity', 'relu', 'sigmoid', 'softplus', 'tanh', 'softmax']
 AdvatageEstimator = Literal['gae', 'gae-rtg', 'vtrace', 'plain']
 InitFunction = Literal['kaiming_uniform', 'xavier_normal', 'glorot', 'xavier_uniform', 'orthogonal']
 CriticType = Literal['v', 'q']
