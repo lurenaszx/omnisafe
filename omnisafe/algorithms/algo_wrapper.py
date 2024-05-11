@@ -164,6 +164,7 @@ class AlgoWrapper:
             torch.set_num_threads(1)
             torch.cuda.set_device(self.cfgs.train_cfgs.device)
         os.environ['OMNISAFE_DEVICE'] = self.cfgs.train_cfgs.device
+        print(registry.get(self.algo))
         self.agent: BaseAlgo = registry.get(self.algo)(
             env_id=self.env_id,
             cfgs=self.cfgs,

@@ -26,7 +26,7 @@ from omnisafe.algorithms.on_policy import (
     second_order,
     simmer,
 )
-from omnisafe.algorithms.on_policy.base import PPO, TRPO, NaturalPG, PolicyGradient
+from omnisafe.algorithms.on_policy.base import PPO, TRPO, NaturalPG, PolicyGradient, QPG
 from omnisafe.algorithms.on_policy.early_terminated import PPOEarlyTerminated, TRPOEarlyTerminated
 from omnisafe.algorithms.on_policy.first_order import CUP, FOCOPS
 from omnisafe.algorithms.on_policy.naive_lagrange import PDO, RCPO, PPOLag, TRPOLag
@@ -36,6 +36,7 @@ from omnisafe.algorithms.on_policy.primal import OnCRPO
 from omnisafe.algorithms.on_policy.saute import PPOSaute, TRPOSaute
 from omnisafe.algorithms.on_policy.second_order import CPO, PCPO
 from omnisafe.algorithms.on_policy.simmer import PPOSimmerPID, TRPOSimmerPID
+from omnisafe.algorithms.on_policy.multi_agent import MultiOnPolicyWrapper
 
 
 __all__ = [
@@ -49,4 +50,5 @@ __all__ = [
     *saute.__all__,
     *second_order.__all__,
     *simmer.__all__,
+    *multi_agent.__all__,
 ]

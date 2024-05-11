@@ -53,6 +53,10 @@ class BaseAlgo(ABC):  # pylint: disable=too-few-public-methods
         self._init_log()
 
     @property
+    def actor_critic(self):
+        return self._actor_critic
+
+    @property
     def logger(self) -> Logger:
         """Get the logger."""
         return self._logger  # pylint: disable=no-member

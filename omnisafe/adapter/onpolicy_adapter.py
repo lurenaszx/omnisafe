@@ -25,6 +25,7 @@ from omnisafe.adapter.online_adapter import OnlineAdapter
 from omnisafe.common.buffer import VectorOnPolicyBuffer
 from omnisafe.common.logger import Logger
 from omnisafe.models.actor_critic.constraint_actor_critic import ConstraintActorCritic
+from omnisafe.models.actor_critic.constraint_actor_q_critic import ConstraintActorQCritic
 from omnisafe.utils.config import Config
 
 
@@ -58,7 +59,7 @@ class OnPolicyAdapter(OnlineAdapter):
     def rollout(  # pylint: disable=too-many-locals
         self,
         steps_per_epoch: int,
-        agent: ConstraintActorCritic,
+        agent: ConstraintActorCritic | ConstraintActorQCritic,
         buffer: VectorOnPolicyBuffer,
         logger: Logger,
     ) -> None:
@@ -75,6 +76,11 @@ class OnPolicyAdapter(OnlineAdapter):
             buffer (VectorOnPolicyBuffer): Vector on-policy buffer.
             logger (Logger): Logger, to log ``EpRet``, ``EpCost``, ``EpLen``.
         """
+        def wrap_step(tem_agent, tem_obs):
+            if isinstance(agent, ConstraintActorCritic):
+                return tem_agent.step(tem_obs)
+            else:
+                return tem_agent.step(tem_obs), *(torch.tensor([0], dtype=torch.float) for _ in range(3))
         self._reset_log()
 
         obs, _ = self.reset()
@@ -82,7 +88,7 @@ class OnPolicyAdapter(OnlineAdapter):
             range(steps_per_epoch),
             description=f'Processing rollout for epoch: {logger.current_epoch}...',
         ):
-            act, value_r, value_c, logp = agent.step(obs)
+            act, value_r, value_c, logp = wrap_step(agent, obs)
             next_obs, reward, cost, terminated, truncated, info = self.step(act)
 
             self._log_value(reward=reward, cost=cost, info=info)
@@ -117,14 +123,14 @@ class OnPolicyAdapter(OnlineAdapter):
                     last_value_c = torch.zeros(1)
                     if not done:
                         if epoch_end:
-                            _, last_value_r, last_value_c, _ = agent.step(obs[idx])
+                            _, last_value_r, last_value_c, _ = wrap_step(agent, obs[idx])
                         if time_out:
-                            _, last_value_r, last_value_c, _ = agent.step(
-                                info['final_observation'][idx],
+                            _, last_value_r, last_value_c, _ = wrap_step(
+                                agent, info['final_observation'][idx],
                             )
-                        last_value_r = last_value_r.unsqueeze(0)
-                        last_value_c = last_value_c.unsqueeze(0)
-
+                        if isinstance(agent, ConstraintActorCritic):
+                            last_value_r = last_value_r.unsqueeze(0)
+                            last_value_c = last_value_c.unsqueeze(0)
                     if done or time_out:
                         self._log_metrics(logger, idx)
                         self._reset_log(idx)
@@ -132,7 +138,6 @@ class OnPolicyAdapter(OnlineAdapter):
                         self._ep_ret[idx] = 0.0
                         self._ep_cost[idx] = 0.0
                         self._ep_len[idx] = 0.0
-
                     buffer.finish_path(last_value_r, last_value_c, idx)
 
     def _log_value(

@@ -175,6 +175,7 @@ class OnPolicyBuffer(BaseBuffer):  # pylint: disable=too-many-instance-attribute
         path_slice = slice(self.path_start_idx, self.ptr)
         last_value_r = last_value_r.to(self._device)
         last_value_c = last_value_c.to(self._device)
+        # print(self.data['reward'][path_slice], last_value_r)
         rewards = torch.cat([self.data['reward'][path_slice], last_value_r])
         values_r = torch.cat([self.data['value_r'][path_slice], last_value_r])
         costs = torch.cat([self.data['cost'][path_slice], last_value_c])
@@ -199,7 +200,7 @@ class OnPolicyBuffer(BaseBuffer):  # pylint: disable=too-many-instance-attribute
         self.data['target_value_r'][path_slice] = target_value_r
         self.data['adv_c'][path_slice] = adv_c
         self.data['target_value_c'][path_slice] = target_value_c
-
+        # print(self.data['obs'][path_slice], self.data['act'][path_slice], rewards, target_value_r)
         self.path_start_idx = self.ptr
 
     def get(self) -> dict[str, torch.Tensor]:

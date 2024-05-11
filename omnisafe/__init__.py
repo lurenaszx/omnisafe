@@ -23,5 +23,6 @@ with suppress(ImportError):
 from omnisafe import algorithms
 from omnisafe.algorithms import ALGORITHMS
 from omnisafe.algorithms.algo_wrapper import AlgoWrapper as Agent
+from omnisafe.algorithms.multi_algo_wrapper import MultiAlgoWrapper as MultiAgents
 from omnisafe.evaluator import Evaluator
 from omnisafe.version import __version__

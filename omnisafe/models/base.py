@@ -206,10 +206,14 @@ class Critic(nn.Module, ABC):
 
         if isinstance(self._obs_space, spaces.Box) and len(self._obs_space.shape) == 1:
             self._obs_dim = self._obs_space.shape[0]
+        elif isinstance(self._obs_space, spaces.Discrete):
+            self._obs_dim = 1
         else:
             raise NotImplementedError
 
         if isinstance(self._act_space, spaces.Box) and len(self._act_space.shape) == 1:
             self._act_dim = self._act_space.shape[0]
+        elif isinstance(self._act_space, spaces.Discrete):
+            self._act_dim = self._act_space.n
         else:
             raise NotImplementedError

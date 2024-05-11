@@ -94,7 +94,7 @@ class DiscreteActor(Actor):
         self._after_inference = True
         return self._current_dist.sample()
 
-    def forward(self, obs: torch.Tensor) -> Distribution:
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Forward method.
 
         Args:
@@ -103,9 +103,9 @@ class DiscreteActor(Actor):
         Returns:
             The current distribution.
         """
-        self._current_dist = self._distribution(obs)
+        prob = self.net(obs)
         self._after_inference = True
-        return self._current_dist
+        return prob
 
     def log_prob(self, act: torch.Tensor) -> torch.Tensor:
         """Compute the log probability of the action given the current distribution.
@@ -123,6 +123,11 @@ class DiscreteActor(Actor):
         self._after_inference = False
         return self._current_dist.log_prob(act).sum(axis=-1)
 
+    def log_prob_all(self) -> torch.Tensor:
+        assert self._after_inference, 'log_prob() should be called after predict() or forward()'
+        self._after_inference = False
+        return self._current_dist.logits
+
 if __name__ == "__main__":
     obs_space = gymnasium.spaces.Discrete(4)
     action_space = gymnasium.spaces.Discrete(4)
@@ -130,4 +135,5 @@ if __name__ == "__main__":
     net = DiscreteActor(obs_space,
                         action_space,
                         hidden_sizes=[10])
-    print(net(torch.tensor([2], dtype=torch.float)))
+    net(torch.tensor([2], dtype=torch.float))
+    print(net.log_prob())

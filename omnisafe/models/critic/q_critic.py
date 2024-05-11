@@ -22,7 +22,7 @@ import torch.nn as nn
 from omnisafe.models.base import Critic
 from omnisafe.typing import Activation, InitFunction, OmnisafeSpace
 from omnisafe.utils.model import build_mlp_network
-
+from gymnasium.spaces import Discrete, Box
 
 class QCritic(Critic):
     """Implementation of Q Critic.
@@ -82,7 +82,7 @@ class QCritic(Critic):
         )
         self.net_lst: list[nn.Sequential] = []
         for idx in range(self._num_critics):
-            if self._use_obs_encoder:
+            if self._use_obs_encoder:       #ToDO assert for discrete action
                 obs_encoder = build_mlp_network(
                     [self._obs_dim, hidden_sizes[0]],
                     activation=activation,
@@ -96,8 +96,12 @@ class QCritic(Critic):
                 )
                 critic = nn.Sequential(obs_encoder, net)
             else:
+                if isinstance(act_space, Discrete):
+                    layer_sizes = [self._obs_dim, *hidden_sizes, self._act_dim]
+                else:
+                    layer_sizes = [self._obs_dim + self._act_dim, *hidden_sizes, 1]
                 net = build_mlp_network(
-                    [self._obs_dim + self._act_dim, *hidden_sizes, 1],
+                    sizes=layer_sizes,
                     activation=activation,
                     weight_initialization_mode=weight_initialization_mode,
                 )
@@ -108,7 +112,7 @@ class QCritic(Critic):
     def forward(
         self,
         obs: torch.Tensor,
-        act: torch.Tensor,
+        act: torch.Tensor|None = None,
     ) -> list[torch.Tensor]:
         """Forward function.
 
@@ -129,5 +133,12 @@ class QCritic(Critic):
                 obs_encode = critic[0](obs)
                 res.append(torch.squeeze(critic[1](torch.cat([obs_encode, act], dim=-1)), -1))
             else:
-                res.append(torch.squeeze(critic(torch.cat([obs, act], dim=-1)), -1))
+                x = obs
+                if act is not None:
+                    x = torch.cat([obs, act], dim=-1)
+                res.append(torch.squeeze(critic(x), -1))
         return res
+
+if __name__ == "__main__":
+    critic = QCritic(Discrete(5), Discrete(5), [10])
+    print(critic(torch.tensor([2], dtype=torch.float)))

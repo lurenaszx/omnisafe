@@ -58,7 +58,6 @@ class OnlineAdapter:
     ) -> None:
         """Initialize an instance of :class:`OnlineAdapter`."""
         assert env_id in support_envs(), f'Env {env_id} is not supported.'
-
         self._cfgs: Config = cfgs
         self._device: torch.device = get_device(cfgs.train_cfgs.device)
         self._env_id: str = env_id
@@ -69,16 +68,21 @@ class OnlineAdapter:
             env_cfgs = self._cfgs.env_cfgs.todict()
 
         self._env: CMDP = make(env_id, num_envs=num_envs, device=self._device, **env_cfgs)
+        action_scale = True
+        if hasattr(cfgs.algo_cfgs, "action_scale"):
+            action_scale = cfgs.algo_cfgs.action_scale
         self._wrapper(
             obs_normalize=cfgs.algo_cfgs.obs_normalize,
             reward_normalize=cfgs.algo_cfgs.reward_normalize,
             cost_normalize=cfgs.algo_cfgs.cost_normalize,
+            action_scale=action_scale,
         )
 
         self._eval_env: CMDP | None = None
         if self._env.need_evaluation:
             self._eval_env = make(env_id, num_envs=1, device=self._device, **env_cfgs)
-            self._wrapper_eval(obs_normalize=cfgs.algo_cfgs.obs_normalize)
+            self._wrapper_eval(obs_normalize=cfgs.algo_cfgs.obs_normalize,
+                               action_scale=action_scale)
 
         self._env.set_seed(seed)
 
@@ -87,6 +91,7 @@ class OnlineAdapter:
         obs_normalize: bool = True,
         reward_normalize: bool = True,
         cost_normalize: bool = True,
+        action_scale: bool = True
     ) -> None:
         """Wrapper the environment.
 
@@ -135,13 +140,15 @@ class OnlineAdapter:
             self._env = RewardNormalize(self._env, device=self._device)
         if cost_normalize:
             self._env = CostNormalize(self._env, device=self._device)
-        self._env = ActionScale(self._env, low=-1.0, high=1.0, device=self._device)
+        if action_scale:
+            self._env = ActionScale(self._env, low=-1.0, high=1.0, device=self._device)
         if self._env.num_envs == 1:
             self._env = Unsqueeze(self._env, device=self._device)
 
     def _wrapper_eval(
         self,
         obs_normalize: bool = True,
+        action_scale: bool = True
     ) -> None:
         """Wrapper the environment for evaluation.
 
@@ -165,7 +172,8 @@ class OnlineAdapter:
             self._eval_env = AutoReset(self._eval_env, device=self._device)
         if obs_normalize:
             self._eval_env = ObsNormalize(self._eval_env, device=self._device)
-        self._eval_env = ActionScale(self._eval_env, low=-1.0, high=1.0, device=self._device)
+        if action_scale:
+            self._eval_env = ActionScale(self._eval_env, low=-1.0, high=1.0, device=self._device)
         self._eval_env = Unsqueeze(self._eval_env, device=self._device)
 
     @property
