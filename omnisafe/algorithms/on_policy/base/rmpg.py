@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Implementation of the RPG algorithm."""
+"""Implementation of the RMPG algorithm."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from omnisafe.algorithms.on_policy.base.qpg import QPG
 import torch.nn.functional as F
 
 @registry.register
-class RPG(QPG):
-    """Regret Policy Gradient
+class RMPG(QPG):
+    """Regret Matching Policy Gradient
 
     References:
         - Title: Actor-Critic Policy Optimization in Partially Observable Multiagent Environments
@@ -55,9 +55,10 @@ class RPG(QPG):
         prob = self._actor_critic.actor(obs)
         q_value = q_value.detach()
         baseline = torch.sum(torch.mul(prob, q_value.detach()), dim=1)
-        advantages = torch.sum(F.relu(q_value - torch.unsqueeze(baseline, 1)))
+        advantages = F.relu(q_value - torch.unsqueeze(baseline, 1))
+        policy_advantages = torch.sum(-torch.mul(prob, advantages.detach()))
 
-        loss = torch.mean(advantages, dim=0)
+        loss = torch.mean(policy_advantages, dim=0)
         entropy = torch.distributions.Categorical(prob).entropy().mean().item()
         if logger is None:
             self._logger.store(

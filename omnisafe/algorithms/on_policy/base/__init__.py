@@ -19,6 +19,8 @@ from omnisafe.algorithms.on_policy.base.policy_gradient import PolicyGradient
 from omnisafe.algorithms.on_policy.base.ppo import PPO
 from omnisafe.algorithms.on_policy.base.trpo import TRPO
 from omnisafe.algorithms.on_policy.base.qpg import QPG
+from omnisafe.algorithms.on_policy.base.rmpg import RMPG
+from omnisafe.algorithms.on_policy.base.rpg import RPG
 
 
 __all__ = [
@@ -27,4 +29,6 @@ __all__ = [
     'PPO',
     'TRPO',
     'QPG',
+    'RMPG',
+    'RPG',
 ]

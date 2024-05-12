@@ -64,6 +64,8 @@ from omnisafe.algorithms.on_policy import (
     TRPOSaute,
     TRPOSimmerPID,
     QPG,
+    RPG,
+    RMPG,
 )
 
 

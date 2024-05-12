@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Implementation of the Policy Gradient algorithm."""
+"""Implementation of the QPG algorithm."""
 
 from __future__ import annotations
 
@@ -38,12 +38,13 @@ from omnisafe.algorithms.on_policy.base.policy_gradient import PolicyGradient
 @registry.register
 # pylint: disable-next=too-many-instance-attributes,too-few-public-methods,line-too-long
 class QPG(BaseAlgo):
-    """The Policy Gradient algorithm.
+    """q-based Policy Gradient
 
     References:
-        - Title: Policy Gradient Methods for Reinforcement Learning with Function Approximation
-        - Authors: Richard S. Sutton, David McAllester, Satinder Singh, Yishay Mansour.
-        - URL: `PG <https://proceedings.neurips.cc/paper/1999/file64d828b85b0bed98e80ade0a5c43b0f-Paper.pdf>`_
+        - Title: Actor-Critic Policy Optimization in Partially Observable Multiagent Environments
+        - Authors: Sriram Srinivasan, Marc Lanctot, Vinicius Zambaldi, Julien Pérolat, Karl Tuyls, Rémi Munosm,
+        Michael Bowling
+        - URL: `https://arxiv.org/abs/1810.09026_
     """
     def _init_env(self) -> None:
         """Initialize the environment.
@@ -130,7 +131,7 @@ class QPG(BaseAlgo):
             num_envs=self._cfgs.train_cfgs.vector_env_nums,
             device=self._device,
         )
-        self._learn_step = 10
+        self._update_count = 10
 
     def _init_log(self) -> None:
         """Log info about epoch.
@@ -376,11 +377,11 @@ class QPG(BaseAlgo):
                 adv_r,
                 adv_c,
             ) in dataloader:
-                self._learn_step += 1
+                self._update_count += 1
                 self._update_reward_critic(obs, act, target_value_r, logger, player_id)
                 if self._cfgs.algo_cfgs.use_cost:
                     self._update_cost_critic(obs, act, target_value_c, logger, player_id)
-                if self._learn_step %10 == 0:
+                if self._update_count % self._cfgs.algo_cfgs.policy_delay == 0:
                     self._update_actor(obs, act, logp, adv_r, adv_c, logger, player_id)
 
             new_distribution = torch.distributions.Categorical(self._actor_critic.actor(original_obs))
@@ -578,8 +579,12 @@ class QPG(BaseAlgo):
             The loss of pi/actor.
         """
         prob = self._actor_critic.actor(obs)
-        advantages = compute_advantages(prob, q_value)
-        loss = torch.mean(advantages, dim=0)
+        q_value = q_value.detach()
+        baseline = torch.sum(torch.mul(prob, q_value.detach()), dim=1)
+        advantages = q_value - torch.unsqueeze(baseline, 1)
+        policy_advantages = torch.sum(-torch.mul(prob, advantages.detach()))
+
+        loss = torch.mean(policy_advantages, dim=0)
         entropy = torch.distributions.Categorical(prob).entropy().mean().item()
         if logger is None:
             self._logger.store(
@@ -606,28 +611,3 @@ class QPG(BaseAlgo):
         return self._buf
 
 
-
-
-def compute_advantages(policy,
-                       action_values,
-                       use_relu=False,):
-    """Compute advantages using pi and Q."""
-    # Compute advantage.
-    # Avoid computing gradients for action_values.
-    action_values = action_values.detach()
-
-    baseline = compute_baseline(policy, action_values)
-
-    advantages = action_values - torch.unsqueeze(baseline, 1)
-    if use_relu:
-        advantages = F.relu(advantages)
-    # print(action_values.size(), policy.size(), baseline.size(), advantages.size())
-    # print(torch.concatenate([action_values, policy, baseline.unsqueeze(1), advantages], dim=1))
-    # Compute advantage weighted by policy.
-    policy_advantages = -torch.mul(policy, advantages.detach())
-    # print(policy_advantages)
-    return torch.sum(policy_advantages, dim=1)
-
-def compute_baseline(policy, action_values):
-  # V = pi * Q, backprop through pi but not Q.
-  return torch.sum(torch.mul(policy, action_values.detach()), dim=1)
