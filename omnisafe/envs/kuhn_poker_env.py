@@ -55,11 +55,11 @@ class KuhnPokerEnv(CMDP):
     Implementation of Kuhn's poker in accordance to OpenAI gym environment interface.
     '''
 
-    need_auto_reset_wrapper = False
+    need_auto_reset_wrapper = True
     need_time_limit_wrapper = False
 
     _support_envs: ClassVar[list[str]] = [
-        'Kuhn_poker-v0',
+        'KuhnPoker-v0',
     ]
 
     def __init__(
@@ -75,6 +75,7 @@ class KuhnPokerEnv(CMDP):
         :param betting_rounds: Number of times that (Default: 2).
         :param ante: Amount of utility that all players must pay at the beginning of an episode (Default 1).
         '''
+        self._num_envs = num_envs
         self.done = False
         self.number_of_players = kwargs.get("num_players", 2)
         self.deck_size = kwargs.get("deck_size", self.number_of_players+1)
@@ -89,9 +90,9 @@ class KuhnPokerEnv(CMDP):
         self._action_space = Discrete(len(ActionType))
         self._action_space_size = len(ActionType)
 
-        single_observation_space = self.calculate_observation_space()
-        self._observation_space = Tuple([single_observation_space
-                                        for _ in range(self.number_of_players)])
+        obs_len = self.calculate_observation_space()
+
+        self._observation_space = Box(low=0, high=1, shape=[self.number_of_players, obs_len], dtype=np.float32)
         self.state_space_size = None  # TODO len(self.random_initial_state_vector())
 
         self.betting_history_index = (self.number_of_players +
@@ -116,8 +117,8 @@ class KuhnPokerEnv(CMDP):
         # Players that will face off in card comparison after betting ends
         self.elegible_players = [i for i in range(self.number_of_players)]
         obs = torch.as_tensor([self.observation_from_state(player_id=i)
-                for i in range(self.number_of_players)])
-        info = {}
+                for i in range(self.number_of_players)], dtype=torch.float32)
+        info = {'current_players': [self.current_player]}
         return obs, info
 
     def step(
@@ -139,7 +140,7 @@ class KuhnPokerEnv(CMDP):
         obs = [self.observation_from_state(i) for i in range(self.number_of_players)]
         info = {"current_players": [self.current_player]}
         truncated = False
-        cost = 0
+        cost = [0 for i in range(self.number_of_players)]
         obs, reward, cost, terminated, truncated = (
             torch.as_tensor(x, dtype=torch.float32, device=self._device)
             for x in (obs, reward_vector, cost, self.done, truncated)
@@ -278,14 +279,9 @@ class KuhnPokerEnv(CMDP):
         return encoded_id + player_card + betting_history_and_pot
 
     def calculate_observation_space(self):
-        player_id = OneHotEncoding(self.number_of_players)
-        dealt_card = OneHotEncoding(self.deck_size)
-
-        betting_states = [OneHotEncoding(len(ActionType) + 1)
-                          for _ in range(self.number_of_players)
-                          for _ in range(self.betting_rounds)]
-        pot_contributions = Tuple([Discrete(3) for _ in range(self.number_of_players)])
-        return Tuple([player_id, dealt_card, *betting_states, pot_contributions])
+        single_len = self.number_of_players+self.deck_size+(len(ActionType) + 1)*self.number_of_players\
+                     *self.betting_rounds + self.number_of_players
+        return single_len
 
     def render(self, mode='human', close=False):
         raise NotImplementedError('Rendering has not been coded yet')

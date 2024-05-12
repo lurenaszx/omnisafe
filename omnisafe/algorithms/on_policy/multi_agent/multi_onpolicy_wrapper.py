@@ -38,7 +38,7 @@ from omnisafe.utils.tools import get_device, seed_all
 @registry.register
 # pylint: disable-next=too-many-instance-attributes,too-few-public-methods,line-too-long
 class MultiOnPolicyWrapper:
-    """The Multi Agent Policy Gradient algorithm.
+    """The Multi Agent Wrapper for different base algorithm.
     """
     def _init_env(self) -> None:
         """Initialize the environment.
@@ -87,7 +87,8 @@ class MultiOnPolicyWrapper:
         self._agents = [algo_class(
             env_id=self._env_id,
             cfgs=self._cfgs,
-        ) for i in self._num_players]
+        ) for i in range(self._num_players)]
+        self._models = [agent.actor_critic for agent in self._agents]
         #ToDo Add below things
 
         # if distributed.world_size() > 1:
@@ -124,24 +125,12 @@ class MultiOnPolicyWrapper:
         distributed.setup_distributed()
 
         self._init_env()
+        self._num_players = self._env.num_players
         self._init_model()
 
         self._init_log()
         self._num_players = self._cfgs.env_cfgs.num_players
-        self._buf: VectorOnPolicyBuffer = VectorOnPolicyBuffer(
-            obs_space=self._env.observation_space,
-            act_space=self._env.action_space,
-            size=self._steps_per_epoch,
-            gamma=self._cfgs.algo_cfgs.gamma,
-            lam=self._cfgs.algo_cfgs.lam,
-            lam_c=self._cfgs.algo_cfgs.lam_c,
-            advantage_estimator=self._cfgs.algo_cfgs.adv_estimation_method,
-            standardized_adv_r=self._cfgs.algo_cfgs.standardized_rew_adv,
-            standardized_adv_c=self._cfgs.algo_cfgs.standardized_cost_adv,
-            penalty_coefficient=self._cfgs.algo_cfgs.penalty_coef,
-            num_envs=self._cfgs.train_cfgs.vector_env_nums,
-            device=self._device,
-        )
+        self._buf: list[VectorOnPolicyBuffer] = [agent.buf for agent in self._agents]
 
     def _init_log(self) -> None:
         """Log info about epoch.
@@ -156,12 +145,6 @@ class MultiOnPolicyWrapper:
         | Metrics/EpRet         | Average return of the epoch.                                         |
         +-----------------------+----------------------------------------------------------------------+
         | Metrics/EpLen         | Average length of the epoch.                                         |
-        +-----------------------+----------------------------------------------------------------------+
-        | Values/reward         | Average value in :meth:`rollout` (from critic network) of the epoch. |
-        +-----------------------+----------------------------------------------------------------------+
-        | Values/cost           | Average cost in :meth:`rollout` (from critic network) of the epoch.  |
-        +-----------------------+----------------------------------------------------------------------+
-        | Values/Adv            | Average reward advantage of the epoch.                               |
         +-----------------------+----------------------------------------------------------------------+
         | Loss/Loss_pi          | Loss of the policy network.                                          |
         +-----------------------+----------------------------------------------------------------------+
@@ -194,7 +177,8 @@ class MultiOnPolicyWrapper:
         )
 
         what_to_save: dict[str, Any] = {}
-        what_to_save['pi'] = self._actor_critic.actor
+        for player_id in range(self._num_players):
+            what_to_save[f'pi_{player_id}'] = self._models[player_id].actor
         if self._cfgs.algo_cfgs.obs_normalize:
             obs_normalizer = self._env.save()['obs_normalizer']
             what_to_save['obs_normalizer'] = obs_normalizer
@@ -202,41 +186,29 @@ class MultiOnPolicyWrapper:
         self._logger.torch_save()
 
         self._logger.register_key(
-            'Metrics/EpRet',
-            window_length=self._cfgs.logger_cfgs.window_lens,
-        )
-        self._logger.register_key(
-            'Metrics/EpCost',
-            window_length=self._cfgs.logger_cfgs.window_lens,
-        )
-        self._logger.register_key(
             'Metrics/EpLen',
             window_length=self._cfgs.logger_cfgs.window_lens,
         )
 
         self._logger.register_key('Train/Epoch')
-        self._logger.register_key('Train/Entropy')
-        self._logger.register_key('Train/KL')
-        self._logger.register_key('Train/StopIter')
-        self._logger.register_key('Train/PolicyRatio', min_and_max=True)
-        self._logger.register_key('Train/LR')
-        if self._cfgs.model_cfgs.actor_type == 'gaussian_learning':
-            self._logger.register_key('Train/PolicyStd')
 
         self._logger.register_key('TotalEnvSteps')
+        for player_id in range(self._num_players):
+            self._logger.register_key(f'Metrics/EpRet_{player_id}')
+            self._logger.register_key(f'Metrics/EpCost_{player_id}')
+            self._logger.register_key(f'Train/Entropy_{player_id}')
+            self._logger.register_key(f'Train/LR_{player_id}')
+            self._logger.register_key(f'Train/KL_{player_id}')
+            self._logger.register_key(f'Train/StopIter_{player_id}')
+            # log information about actor
+            self._logger.register_key(f'Loss/Loss_pi_{player_id}', delta=True)
 
-        # log information about actor
-        self._logger.register_key('Loss/Loss_pi', delta=True)
-        self._logger.register_key('Value/Adv')
+            # log information about critic
+            self._logger.register_key(f'Loss/Loss_reward_critic_{player_id}', delta=True)
 
-        # log information about critic
-        self._logger.register_key('Loss/Loss_reward_critic', delta=True)
-        self._logger.register_key('Value/reward')
-
-        if self._cfgs.algo_cfgs.use_cost:
-            # log information about cost critic
-            self._logger.register_key('Loss/Loss_cost_critic', delta=True)
-            self._logger.register_key('Value/cost')
+            if self._cfgs.algo_cfgs.use_cost:
+                # log information about cost critic
+                self._logger.register_key(f'Loss/Loss_cost_critic_{player_id}', delta=True)
 
         self._logger.register_key('Time/Total')
         self._logger.register_key('Time/Rollout')
@@ -246,9 +218,9 @@ class MultiOnPolicyWrapper:
 
         # register environment specific keys
         for env_spec_key in self._env.env_spec_keys:
-            self.logger.register_key(env_spec_key)
+            self._logger.register_key(env_spec_key)
 
-    def learn(self) -> tuple[float, float, float]:
+    def learn(self) -> tuple[float, list[float], float]:
         """This is main function for algorithm update.
 
         It is divided into the following steps:
@@ -271,7 +243,7 @@ class MultiOnPolicyWrapper:
             rollout_time = time.time()
             self._env.rollout(
                 steps_per_epoch=self._steps_per_epoch,
-                agent=self._agents,
+                agent=self._models,
                 buffer=self._buf,
                 logger=self._logger,
             )
@@ -281,14 +253,6 @@ class MultiOnPolicyWrapper:
             self._update()
             self._logger.store({'Time/Update': time.time() - update_time})
 
-            if self._cfgs.model_cfgs.exploration_noise_anneal:
-                for actor_critic in self._agents:
-                    actor_critic.annealing(epoch)
-
-            if self._cfgs.model_cfgs.actor.lr is not None:
-                for actor_critic in self._agents:
-                    actor_critic.actor_scheduler.step()
-
             self._logger.store(
                 {
                     'TotalEnvSteps': (epoch + 1) * self._cfgs.algo_cfgs.steps_per_epoch,
@@ -296,11 +260,6 @@ class MultiOnPolicyWrapper:
                     'Time/Total': (time.time() - start_time),
                     'Time/Epoch': (time.time() - epoch_time),
                     'Train/Epoch': epoch,
-                    'Train/LR': (
-                        0.0
-                        if self._cfgs.model_cfgs.actor.lr is None
-                        else self._actor_critic.actor_scheduler.get_last_lr()[0]
-                    ),
                 },
             )
 
@@ -311,9 +270,8 @@ class MultiOnPolicyWrapper:
                 epoch + 1
             ) == self._cfgs.train_cfgs.epochs:
                 self._logger.torch_save()
-
-        ep_ret = self._logger.get_stats('Metrics/EpRet')[0]
-        ep_cost = self._logger.get_stats('Metrics/EpCost')[0]
+        ep_ret = 0
+        ep_cost = [self._logger.get_stats(f'Metrics/EpCost_{i}')[0] for i in range(self._num_players)]
         ep_len = self._logger.get_stats('Metrics/EpLen')[0]
         self._logger.close()
         self._env.close()
@@ -321,283 +279,8 @@ class MultiOnPolicyWrapper:
         return ep_ret, ep_cost, ep_len
 
     def _update(self) -> None:
-        """Update actor, critic.
-
-        -  Get the ``data`` from buffer
-
-        .. hint::
-
-            +----------------+------------------------------------------------------------------+
-            | obs            | ``observation`` sampled from buffer.                             |
-            +================+==================================================================+
-            | act            | ``action`` sampled from buffer.                                  |
-            +----------------+------------------------------------------------------------------+
-            | target_value_r | ``target reward value`` sampled from buffer.                     |
-            +----------------+------------------------------------------------------------------+
-            | target_value_c | ``target cost value`` sampled from buffer.                       |
-            +----------------+------------------------------------------------------------------+
-            | logp           | ``log probability`` sampled from buffer.                         |
-            +----------------+------------------------------------------------------------------+
-            | adv_r          | ``estimated advantage`` (e.g. **GAE**) sampled from buffer.      |
-            +----------------+------------------------------------------------------------------+
-            | adv_c          | ``estimated cost advantage`` (e.g. **GAE**) sampled from buffer. |
-            +----------------+------------------------------------------------------------------+
+        #Update actor, critic for all agents
+        for player_id, agent in enumerate(self._agents):
+            agent._update(self._logger, player_id)
 
 
-        -  Update value net by :meth:`_update_reward_critic`.
-        -  Update cost net by :meth:`_update_cost_critic`.
-        -  Update policy net by :meth:`_update_actor`.
-
-        The basic process of each update is as follows:
-
-        #. Get the data from buffer.
-        #. Shuffle the data and split it into mini-batch data.
-        #. Get the loss of network.
-        #. Update the network by loss.
-        #. Repeat steps 2, 3 until the number of mini-batch data is used up.
-        #. Repeat steps 2, 3, 4 until the KL divergence violates the limit.
-        """
-        data = self._buf.get()
-        obs, act, logp, target_value_r, target_value_c, adv_r, adv_c = (
-            data['obs'],
-            data['act'],
-            data['logp'],
-            data['target_value_r'],
-            data['target_value_c'],
-            data['adv_r'],
-            data['adv_c'],
-        )
-
-        original_obs = obs
-        old_distribution = self._actor_critic.actor(obs)
-
-        dataloader = DataLoader(
-            dataset=TensorDataset(obs, act, logp, target_value_r, target_value_c, adv_r, adv_c),
-            batch_size=self._cfgs.algo_cfgs.batch_size,
-            shuffle=True,
-        )
-
-        update_counts = 0
-        final_kl = 0.0
-
-        for i in track(range(self._cfgs.algo_cfgs.update_iters), description='Updating...'):
-            for (
-                obs,
-                act,
-                logp,
-                target_value_r,
-                target_value_c,
-                adv_r,
-                adv_c,
-            ) in dataloader:
-                self._update_reward_critic(obs, target_value_r)
-                if self._cfgs.algo_cfgs.use_cost:
-                    self._update_cost_critic(obs, target_value_c)
-                self._update_actor(obs, act, logp, adv_r, adv_c)
-
-            new_distribution = self._actor_critic.actor(original_obs)
-
-            kl = (
-                torch.distributions.kl.kl_divergence(old_distribution, new_distribution)
-                .sum(-1, keepdim=True)
-                .mean()
-            )
-            kl = distributed.dist_avg(kl)
-
-            final_kl = kl.item()
-            update_counts += 1
-
-            if self._cfgs.algo_cfgs.kl_early_stop and kl.item() > self._cfgs.algo_cfgs.target_kl:
-                self._logger.log(f'Early stopping at iter {i + 1} due to reaching max kl')
-                break
-
-        self._logger.store(
-            {
-                'Train/StopIter': update_counts,  # pylint: disable=undefined-loop-variable
-                'Value/Adv': adv_r.mean().item(),
-                'Train/KL': final_kl,
-            },
-        )
-
-    def _update_reward_critic(self, obs: torch.Tensor, target_value_r: torch.Tensor) -> None:
-        r"""Update value network under a double for loop.
-
-        The loss function is ``MSE loss``, which is defined in ``torch.nn.MSELoss``.
-        Specifically, the loss function is defined as:
-
-        .. math::
-
-            L = \frac{1}{N} \sum_{i=1}^N (\hat{V} - V)^2
-
-        where :math:`\hat{V}` is the predicted cost and :math:`V` is the target cost.
-
-        #. Compute the loss function.
-        #. Add the ``critic norm`` to the loss function if ``use_critic_norm`` is ``True``.
-        #. Clip the gradient if ``use_max_grad_norm`` is ``True``.
-        #. Update the network by loss function.
-
-        Args:
-            obs (torch.Tensor): The ``observation`` sampled from buffer.
-            target_value_r (torch.Tensor): The ``target_value_r`` sampled from buffer.
-        """
-        self._actor_critic.reward_critic_optimizer.zero_grad()
-        loss = nn.functional.mse_loss(self._actor_critic.reward_critic(obs)[0], target_value_r)
-
-        if self._cfgs.algo_cfgs.use_critic_norm:
-            for param in self._actor_critic.reward_critic.parameters():
-                loss += param.pow(2).sum() * self._cfgs.algo_cfgs.critic_norm_coef
-
-        loss.backward()
-
-        if self._cfgs.algo_cfgs.use_max_grad_norm:
-            clip_grad_norm_(
-                self._actor_critic.reward_critic.parameters(),
-                self._cfgs.algo_cfgs.max_grad_norm,
-            )
-        distributed.avg_grads(self._actor_critic.reward_critic)
-        self._actor_critic.reward_critic_optimizer.step()
-
-        self._logger.store({'Loss/Loss_reward_critic': loss.mean().item()})
-
-    def _update_cost_critic(self, obs: torch.Tensor, target_value_c: torch.Tensor) -> None:
-        r"""Update value network under a double for loop.
-
-        The loss function is ``MSE loss``, which is defined in ``torch.nn.MSELoss``.
-        Specifically, the loss function is defined as:
-
-        .. math::
-
-            L = \frac{1}{N} \sum_{i=1}^N (\hat{V} - V)^2
-
-        where :math:`\hat{V}` is the predicted cost and :math:`V` is the target cost.
-
-        #. Compute the loss function.
-        #. Add the ``critic norm`` to the loss function if ``use_critic_norm`` is ``True``.
-        #. Clip the gradient if ``use_max_grad_norm`` is ``True``.
-        #. Update the network by loss function.
-
-        Args:
-            obs (torch.Tensor): The ``observation`` sampled from buffer.
-            target_value_c (torch.Tensor): The ``target_value_c`` sampled from buffer.
-        """
-        self._actor_critic.cost_critic_optimizer.zero_grad()
-        loss = nn.functional.mse_loss(self._actor_critic.cost_critic(obs)[0], target_value_c)
-
-        if self._cfgs.algo_cfgs.use_critic_norm:
-            for param in self._actor_critic.cost_critic.parameters():
-                loss += param.pow(2).sum() * self._cfgs.algo_cfgs.critic_norm_coef
-
-        loss.backward()
-
-        if self._cfgs.algo_cfgs.use_max_grad_norm:
-            clip_grad_norm_(
-                self._actor_critic.cost_critic.parameters(),
-                self._cfgs.algo_cfgs.max_grad_norm,
-            )
-        distributed.avg_grads(self._actor_critic.cost_critic)
-        self._actor_critic.cost_critic_optimizer.step()
-
-        self._logger.store({'Loss/Loss_cost_critic': loss.mean().item()})
-
-    def _update_actor(  # pylint: disable=too-many-arguments
-        self,
-        obs: torch.Tensor,
-        act: torch.Tensor,
-        logp: torch.Tensor,
-        adv_r: torch.Tensor,
-        adv_c: torch.Tensor,
-    ) -> None:
-        """Update policy network under a double for loop.
-
-        #. Compute the loss function.
-        #. Clip the gradient if ``use_max_grad_norm`` is ``True``.
-        #. Update the network by loss function.
-
-        .. warning::
-            For some ``KL divergence`` based algorithms (e.g. TRPO, CPO, etc.),
-            the ``KL divergence`` between the old policy and the new policy is calculated.
-            And the ``KL divergence`` is used to determine whether the update is successful.
-            If the ``KL divergence`` is too large, the update will be terminated.
-
-        Args:
-            obs (torch.Tensor): The ``observation`` sampled from buffer.
-            act (torch.Tensor): The ``action`` sampled from buffer.
-            logp (torch.Tensor): The ``log_p`` sampled from buffer.
-            adv_r (torch.Tensor): The ``reward_advantage`` sampled from buffer.
-            adv_c (torch.Tensor): The ``cost_advantage`` sampled from buffer.
-        """
-        adv = self._compute_adv_surrogate(adv_r, adv_c)
-        loss = self._loss_pi(obs, act, logp, adv)
-        self._actor_critic.actor_optimizer.zero_grad()
-        loss.backward()
-        if self._cfgs.algo_cfgs.use_max_grad_norm:
-            clip_grad_norm_(
-                self._actor_critic.actor.parameters(),
-                self._cfgs.algo_cfgs.max_grad_norm,
-            )
-        distributed.avg_grads(self._actor_critic.actor)
-        self._actor_critic.actor_optimizer.step()
-
-    def _compute_adv_surrogate(  # pylint: disable=unused-argument
-        self,
-        adv_r: torch.Tensor,
-        adv_c: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute surrogate loss.
-
-        Policy Gradient only use reward advantage.
-
-        Args:
-            adv_r (torch.Tensor): The ``reward_advantage`` sampled from buffer.
-            adv_c (torch.Tensor): The ``cost_advantage`` sampled from buffer.
-
-        Returns:
-            The advantage function of reward to update policy network.
-        """
-        return adv_r
-
-    def _loss_pi(
-        self,
-        obs: torch.Tensor,
-        act: torch.Tensor,
-        logp: torch.Tensor,
-        adv: torch.Tensor,
-    ) -> torch.Tensor:
-        r"""Computing pi/actor loss.
-
-        In Policy Gradient, the loss is defined as:
-
-        .. math::
-
-            L = -\underset{s_t \sim \rho_{\theta}}{\mathbb{E}} [
-                \sum_{t=0}^T ( \frac{\pi^{'}_{\theta}(a_t|s_t)}{\pi_{\theta}(a_t|s_t)} )
-                 A^{R}_{\pi_{\theta}}(s_t, a_t)
-            ]
-
-        where :math:`\pi_{\theta}` is the policy network, :math:`\pi^{'}_{\theta}`
-        is the new policy network, :math:`A^{R}_{\pi_{\theta}}(s_t, a_t)` is the advantage.
-
-        Args:
-            obs (torch.Tensor): The ``observation`` sampled from buffer.
-            act (torch.Tensor): The ``action`` sampled from buffer.
-            logp (torch.Tensor): The ``log probability`` of action sampled from buffer.
-            adv (torch.Tensor): The ``advantage`` processed. ``reward_advantage`` here.
-
-        Returns:
-            The loss of pi/actor.
-        """
-        distribution = self._actor_critic.actor(obs)
-        logp_ = self._actor_critic.actor.log_prob(act)
-        std = self._actor_critic.actor.std
-        ratio = torch.exp(logp_ - logp)
-        loss = -(ratio * adv).mean()
-        entropy = distribution.entropy().mean().item()
-        self._logger.store(
-            {
-                'Train/Entropy': entropy,
-                'Train/PolicyRatio': ratio,
-                'Train/PolicyStd': std,
-                'Loss/Loss_pi': loss.mean().item(),
-            },
-        )
-        return loss

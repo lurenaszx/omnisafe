@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy
+import numpy as np
 import torch
 from rich.progress import track
 
@@ -25,8 +27,9 @@ from omnisafe.adapter.online_adapter import OnlineAdapter
 from omnisafe.common.buffer import VectorOnPolicyBuffer
 from omnisafe.common.logger import Logger
 from omnisafe.models.actor_critic.constraint_actor_critic import ConstraintActorCritic
+from omnisafe.models.actor_critic.constraint_actor_q_critic import ConstraintActorQCritic
 from omnisafe.utils.config import Config
-
+from omnisafe.algorithms.base_algo import BaseAlgo
 
 class MultiAgentOnPolicyAdapter(OnlineAdapter):
     """OnPolicy Adapter for OmniSafe.
@@ -60,10 +63,13 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
         """The observation space of the environment."""
         return self._env.number_of_players
 
+    def init_value(self):
+        return torch.zeros((self._num_env,), dtype=torch.float32)
+
     def rollout(  # pylint: disable=too-many-locals
         self,
         steps_per_epoch: int,
-        agent: list[ConstraintActorCritic],
+        agent: list[ConstraintActorCritic | ConstraintActorQCritic],
         buffer: list[VectorOnPolicyBuffer],
         logger: Logger,
     ) -> None:
@@ -80,40 +86,56 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
             buffer (VectorOnPolicyBuffer): Vector on-policy buffer.
             logger (Logger): Logger, to log ``EpRet``, ``EpCost``, ``EpLen``.
         """
+        # Only accept one environment
+        def wrap_step(tem_agent, tem_obs):
+            if isinstance(agent, ConstraintActorCritic):
+                return tem_agent.step(tem_obs)
+            else:
+                return tem_agent.step(tem_obs), *(torch.tensor([0], dtype=torch.float) for _ in range(3))
+
         self._reset_log()
 
         obs, info = self.reset()
+        obs_list, act_list, value_r_list, value_c_list, logp_list = ([None for _ in range(self.num_players)],
+                            [None for _ in range(self.num_players)], [None for _ in range(self.num_players)],
+                            [None for _ in range(self.num_players)], [None for _ in range(self.num_players)],)
+        reward_list = [self.init_value() for _ in range(self.num_players)]
+        cost_list = [self.init_value() for _ in range(self.num_players)]
         for step in track(
             range(steps_per_epoch),
             description=f'Processing rollout for epoch: {logger.current_epoch}...',
         ):
             current_players = info['current_players']
-            act_list, value_r_list, value_c_list, logp_list = [None], [], [], []
+            total_act = []
             for player_id in current_players:
-                act, value_r, value_c, logp = agent[player_id].step(obs)
-                act_list.append(act)
-                value_r_list.append(value_r)
-                value_c_list.append(value_c)
-                logp_list.append(logp)
-            next_obs, reward, cost, terminated, truncated, info = self.step(torch.as_tensor(act_list))
+                if act_list[player_id] is not None:
+                    buffer[player_id].store(
+                        obs=obs_list[player_id],
+                        act=act_list[player_id],
+                        reward=reward_list[player_id],
+                        cost=cost_list[player_id],
+                        value_r=value_r_list[idx],
+                        value_c=value_c_list[idx],
+                        logp=logp_list[idx],
+                    )
+                    reward_list[player_id], cost_list[player_id] = self.init_value(), self.init_value()
+                act, value_r, value_c, logp = wrap_step(agent[player_id], obs[:, player_id].unsqueeze(1))
+                total_act.append(act)
+                act_list[player_id], value_r_list[player_id], value_c_list[player_id], logp_list[player_id] = (
+                    act, value_r, value_c, logp)
+                obs_list[player_id] = obs[:, player_id].unsqueeze(1)
 
-            self._log_value(reward=reward, cost=cost, info=info)
+            next_obs, reward, cost, terminated, truncated, info = self.step(torch.as_tensor(total_act))
+            for player_id in range(self.num_players):
+                # print(reward_list, reward[:, player_id])
+                reward_list[player_id] += reward[:, player_id]
+                cost_list[player_id] += cost[:, player_id]
+            self._log_value(reward=reward, cost=cost, info=info)  #ToDo to add
 
-            for player_id in current_players:
-                if self._cfgs.algo_cfgs.use_cost:
-                    logger.store({'Value/cost': value_c_list[player_id]})
-                logger.store({'Value/reward': value_r_list[player_id]})
-
-            for idx, player_id in enumerate(current_players):
-                buffer[player_id].store(
-                    obs=obs[player_id],
-                    act=act_list[idx],
-                    reward=reward[player_id],
-                    cost=cost[player_id],
-                    value_r=value_r_list[idx],
-                    value_c=value_c_list[idx],
-                    logp=logp_list[idx],
-                )
+            # for player_id in current_players:
+            #     if self._cfgs.algo_cfgs.use_cost:
+            #         logger[player_id].store({'Value/cost': value_c_list[player_id]})
+            #     logger[player_id].store({'Value/reward': value_r_list[player_id]})
 
             obs = next_obs
             epoch_end = step >= steps_per_epoch - 1
@@ -132,13 +154,13 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
                         last_value_c = torch.zeros(1)
                         if not done:
                             if epoch_end:
-                                _, last_value_r, last_value_c, _ = agent[player_id].step(obs[idx][player_id])
+                                _, last_value_r, last_value_c, _ = wrap_step(agent[player_id], obs[idx][player_id])
                             if time_out:
-                                _, last_value_r, last_value_c, _ = agent[player_id].step(
-                                    info['final_observation'][idx][player_id],
-                                )
-                            last_value_r = last_value_r.unsqueeze(0)
-                            last_value_c = last_value_c.unsqueeze(0)
+                                _, last_value_r, last_value_c, _ = wrap_step(agent[player_id],
+                                                                             info['final_observation'][idx][player_id])
+                            if isinstance(agent, ConstraintActorCritic):
+                                last_value_r = last_value_r.unsqueeze(0)
+                                last_value_c = last_value_c.unsqueeze(0)
 
                         if done or time_out:
                             self._log_metrics(logger, idx)
@@ -147,8 +169,19 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
                             self._ep_ret[idx] = 0.0
                             self._ep_cost[idx] = 0.0
                             self._ep_len[idx] = 0.0
-
+                        if act_list[player_id] is not None:
+                            buffer[player_id].store(
+                                obs=obs_list[player_id],
+                                act=act_list[player_id],
+                                reward=reward_list[player_id],
+                                cost=cost_list[player_id],
+                                value_r=value_r_list[player_id],
+                                value_c=value_c_list[player_id],
+                                logp=logp_list[player_id],
+                            )
+                            reward_list[player_id], cost_list[player_id] = self.init_value(), self.init_value()
                         buffer[player_id].finish_path(last_value_r, last_value_c, idx)
+                    act_list = [None for _ in range(self.num_players)]
 
     def _log_value(
         self,
@@ -167,9 +200,10 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
             cost (torch.Tensor): The immediate step cost.
             info (dict[str, Any]): Some information logged by the environment.
         """
-        self._ep_ret += info.get('original_reward', reward).cpu()
-        self._ep_cost += info.get('original_cost', cost).cpu()
-        self._ep_len += 1
+        for player_id in range(self.num_players):
+            self._ep_ret[player_id] += info.get('original_reward', reward).cpu()[:, player_id]
+            self._ep_cost[player_id] += info.get('original_cost', cost).cpu()[:, player_id]
+            self._ep_len += 1
 
     def _log_metrics(self, logger: Logger, idx: int) -> None:
         """Log metrics, including ``EpRet``, ``EpCost``, ``EpLen``.
@@ -180,13 +214,14 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
         """
         if hasattr(self._env, 'spec_log'):
             self._env.spec_log(logger)
-        logger.store(
-            {
-                'Metrics/EpRet': self._ep_ret[idx],
-                'Metrics/EpCost': self._ep_cost[idx],
-                'Metrics/EpLen': self._ep_len[idx],
-            },
-        )
+        logger.store({'Metrics/EpLen': self._ep_len[idx]})
+        for player_id in range(self.num_players):
+            logger.store(
+                {
+                    f'Metrics/EpRet_{player_id}': self._ep_ret[player_id][idx],
+                    f'Metrics/EpCost_{player_id}': self._ep_cost[player_id][idx],
+                },
+            )
 
     def _reset_log(self, idx: int | None = None) -> None:
         """Reset the episode return, episode cost and episode length.
@@ -196,16 +231,16 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
                 (single environment).
         """
         if idx is None:
-            self._ep_ret = torch.zeros(self._env.num_envs)
-            self._ep_cost = torch.zeros(self._env.num_envs)
+            self._ep_ret = torch.zeros((self.num_players, self._env.num_envs))
+            self._ep_cost = torch.zeros((self.num_players, self._env.num_envs))
             self._ep_len = torch.zeros(self._env.num_envs)
         else:
-            self._ep_ret[idx] = 0.0
-            self._ep_cost[idx] = 0.0
+            self._ep_ret[:, idx] = 0.0
+            self._ep_cost[:, idx] = 0.0
             self._ep_len[idx] = 0.0
 
 if __name__ == '__main__':
 
-    env = MultiAgentPolicyAdapter("Kuhn_poker-v0", num_envs=1, seed=0, cfgs=Config())
+    env = MultiAgentOnPolicyAdapter("Rock-Paper-Scissors-v0", num_envs=1, seed=0, cfgs=Config())
 
 

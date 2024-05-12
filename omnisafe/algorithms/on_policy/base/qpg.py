@@ -255,7 +255,6 @@ class QPG(BaseAlgo):
         self._logger.log('INFO: Start training')
 
         for epoch in range(self._cfgs.train_cfgs.epochs):
-            print(self._buf.buffers[0].ptr)
             epoch_time = time.time()
 
             rollout_time = time.time()
@@ -308,7 +307,7 @@ class QPG(BaseAlgo):
 
         return ep_ret, ep_cost, ep_len
 
-    def _update(self) -> None:
+    def _update(self, logger: Logger = None, player_id: int = None) -> None:
         """Update actor, critic.
 
         -  Get the ``data`` from buffer
@@ -355,7 +354,6 @@ class QPG(BaseAlgo):
             data['adv_r'],
             data['adv_c'],
         )
-        # print(obs, target_value_r)
         original_obs = obs
         old_distribution = torch.distributions.Categorical(self._actor_critic.actor(obs))
 
@@ -379,11 +377,11 @@ class QPG(BaseAlgo):
                 adv_c,
             ) in dataloader:
                 self._learn_step += 1
-                self._update_reward_critic(obs, act, target_value_r)
+                self._update_reward_critic(obs, act, target_value_r, logger, player_id)
                 if self._cfgs.algo_cfgs.use_cost:
-                    self._update_cost_critic(obs, act, target_value_c)
-                if self._learn_step %40 == 0:
-                    self._update_actor(obs, act, logp, adv_r, adv_c)
+                    self._update_cost_critic(obs, act, target_value_c, logger, player_id)
+                if self._learn_step %10 == 0:
+                    self._update_actor(obs, act, logp, adv_r, adv_c, logger, player_id)
 
             new_distribution = torch.distributions.Categorical(self._actor_critic.actor(original_obs))
 
@@ -400,16 +398,25 @@ class QPG(BaseAlgo):
             # if self._cfgs.algo_cfgs.kl_early_stop and kl.item() > self._cfgs.algo_cfgs.target_kl:
             #     self._logger.log(f'Early stopping at iter {i + 1} due to reaching max kl')
             #     break
+        if logger is None:
+            self._logger.store(
+                {
+                    'Train/StopIter': update_counts,  # pylint: disable=undefined-loop-variable
+                    'Value/Adv': adv_r.mean().item(),
+                    'Train/KL': final_kl,
+                },
+            )
+        else:
+            logger.store(
+                {
+                    f'Train/StopIter_{player_id}': update_counts,  # pylint: disable=undefined-loop-variable
+                    f'Train/KL_{player_id}': final_kl,
+                },
+            )
 
-        self._logger.store(
-            {
-                'Train/StopIter': update_counts,  # pylint: disable=undefined-loop-variable
-                'Value/Adv': adv_r.mean().item(),
-                'Train/KL': final_kl,
-            },
-        )
-
-    def _update_reward_critic(self, obs: torch.Tensor, act: torch.Tensor, target_value_r: torch.Tensor) -> None:
+    def _update_reward_critic(self, obs: torch.Tensor, act: torch.Tensor,
+                              target_value_r: torch.Tensor, logger: Logger = None,
+                              player_id: int = None) -> None:
         r"""Update value network under a double for loop.
 
         The loss function is ``MSE loss``, which is defined in ``torch.nn.MSELoss``.
@@ -448,10 +455,14 @@ class QPG(BaseAlgo):
             )
         distributed.avg_grads(self._actor_critic.reward_critic)
         self._actor_critic.reward_critic_optimizer.step()
+        if logger is None:
+            self._logger.store({'Loss/Loss_reward_critic': loss.mean().item()})
+        else:
+            logger.store({f'Loss/Loss_reward_critic_{player_id}': loss.mean().item()})
 
-        self._logger.store({'Loss/Loss_reward_critic': loss.mean().item()})
-
-    def _update_cost_critic(self, obs: torch.Tensor, act: torch.Tensor, target_value_c: torch.Tensor) -> None:
+    def _update_cost_critic(self, obs: torch.Tensor, act: torch.Tensor,
+                            target_value_c: torch.Tensor, logger: Logger = None,
+                            player_id: int = None) -> None:
         r"""Update value network under a double for loop.
 
         The loss function is ``MSE loss``, which is defined in ``torch.nn.MSELoss``.
@@ -489,7 +500,10 @@ class QPG(BaseAlgo):
         distributed.avg_grads(self._actor_critic.cost_critic)
         self._actor_critic.cost_critic_optimizer.step()
 
-        self._logger.store({'Loss/Loss_cost_critic': loss.mean().item()})
+        if logger is None:
+            self._logger.store({'Loss/Loss_cost_critic': loss.mean().item()})
+        else:
+            logger.store({f'Loss/Loss_cost_critic_{player_id}': loss.mean().item()})
 
     def _update_actor(  # pylint: disable=too-many-arguments
         self,
@@ -498,6 +512,8 @@ class QPG(BaseAlgo):
         logp: torch.Tensor,
         adv_r: torch.Tensor,
         adv_c: torch.Tensor,
+        logger: Logger = None,
+        player_id: int = None,
     ) -> None:
         """Update policy network under a double for loop.
 
@@ -514,7 +530,7 @@ class QPG(BaseAlgo):
         """
         q_values = self._actor_critic.reward_critic(obs)[0]
 
-        loss = self._loss_pi(obs, act, q_values)
+        loss = self._loss_pi(obs, act, q_values, logger, player_id)
         self._actor_critic.actor_optimizer.zero_grad()
         loss.backward()
         if self._cfgs.algo_cfgs.use_max_grad_norm:
@@ -548,6 +564,8 @@ class QPG(BaseAlgo):
         obs: torch.Tensor,
         act: torch.Tensor,
         q_value: torch.Tensor,
+        logger: Logger = None,
+        player_id: int = None,
     ) -> torch.Tensor:
         r"""Computing pi/actor loss.
 
@@ -563,13 +581,32 @@ class QPG(BaseAlgo):
         advantages = compute_advantages(prob, q_value)
         loss = torch.mean(advantages, dim=0)
         entropy = torch.distributions.Categorical(prob).entropy().mean().item()
-        self._logger.store(
-            {
-                'Train/Entropy': entropy,
-                'Loss/Loss_pi': loss.mean().item(),
-            },
-        )
+        if logger is None:
+            self._logger.store(
+                {
+                    'Train/Entropy': entropy,
+                    'Loss/Loss_pi': loss.mean().item(),
+                },
+            )
+        else:
+            logger.store(
+                {
+                    f'Train/Entropy_{player_id}': entropy,
+                    f'Loss/Loss_pi_{player_id}': loss.mean().item(),
+                }
+            )
         return loss
+
+    @property
+    def actor_critic(self):
+        return self._actor_critic
+
+    @property
+    def buf(self):
+        return self._buf
+
+
+
 
 def compute_advantages(policy,
                        action_values,

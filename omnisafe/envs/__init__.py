@@ -24,3 +24,4 @@ from omnisafe.envs.safety_gymnasium_env import SafetyGymnasiumEnv
 from omnisafe.envs.safety_gymnasium_modelbased import SafetyGymnasiumModelBased
 from omnisafe.envs.safety_isaac_gym_env import SafetyIsaacGymEnv
 from omnisafe.envs.kuhn_poker_env import KuhnPokerEnv
+from omnisafe.envs.rock_paper_scissors_env import RockPaperScissorsEnv

@@ -122,3 +122,6 @@ defaults:
       lr: 0.0003
       # number of critics
       num_critics: 1
+  env_cfgs:
+    #the number of players
+      num_players: 2

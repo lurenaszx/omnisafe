@@ -33,7 +33,7 @@ from omnisafe.envs.wrapper import (
 from omnisafe.typing import OmnisafeSpace
 from omnisafe.utils.config import Config
 from omnisafe.utils.tools import get_device
-
+from gymnasium.spaces import Discrete
 
 class OnlineAdapter:
     """Online Adapter for OmniSafe.
@@ -61,6 +61,7 @@ class OnlineAdapter:
         self._cfgs: Config = cfgs
         self._device: torch.device = get_device(cfgs.train_cfgs.device)
         self._env_id: str = env_id
+        self._num_env: int = num_envs
 
         env_cfgs = {}
 
@@ -134,7 +135,7 @@ class OnlineAdapter:
             )
         if self._env.need_auto_reset_wrapper:
             self._env = AutoReset(self._env, device=self._device)
-        if obs_normalize:
+        if obs_normalize and not isinstance(self._env.observation_space, Discrete):
             self._env = ObsNormalize(self._env, device=self._device)
         if reward_normalize:
             self._env = RewardNormalize(self._env, device=self._device)
@@ -170,7 +171,7 @@ class OnlineAdapter:
             )
         if self._env.need_auto_reset_wrapper:
             self._eval_env = AutoReset(self._eval_env, device=self._device)
-        if obs_normalize:
+        if obs_normalize and not isinstance(self._env.observation_space, Discrete):
             self._eval_env = ObsNormalize(self._eval_env, device=self._device)
         if action_scale:
             self._eval_env = ActionScale(self._eval_env, low=-1.0, high=1.0, device=self._device)

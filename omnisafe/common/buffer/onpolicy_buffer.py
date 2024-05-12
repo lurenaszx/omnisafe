@@ -142,6 +142,7 @@ class OnPolicyBuffer(BaseBuffer):  # pylint: disable=too-many-instance-attribute
         """
         assert self.ptr < self.max_size, 'No more space in the buffer!'
         for key, value in data.items():
+            # print(key, value)
             self.data[key][self.ptr] = value
         self.ptr += 1
 

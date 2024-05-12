@@ -70,8 +70,10 @@ class BaseBuffer(ABC):
     ) -> None:
         """Initialize an instance of :class:`BaseBuffer`."""
         self._device: torch.device = device
-        if isinstance(obs_space, Box):
+        if isinstance(obs_space, Box) and len(obs_space.shape) == 1:
             obs_buf = torch.zeros((size, *obs_space.shape), dtype=torch.float32, device=device)
+        elif isinstance(obs_space, Box) and len(obs_space.shape) == 2:
+            obs_buf = torch.zeros((size, *obs_space.shape[1:]), dtype=torch.float32, device=device)
         elif isinstance(obs_space, Discrete):
             obs_buf = torch.zeros((size, 1), dtype=torch.int, device=device)
         else:

@@ -65,6 +65,8 @@ class Actor(nn.Module, ABC):
 
         if isinstance(self._obs_space, spaces.Box) and len(self._obs_space.shape) == 1:
             self._obs_dim: int = self._obs_space.shape[0]
+        elif isinstance(self._obs_space, spaces.Box) and len(self._obs_space.shape) == 2:  # For multi-agents
+            self._obs_dim: int = self._obs_space.shape[1]
         elif isinstance(self._obs_space, spaces.Discrete):
             self._obs_dim: int = 1
         else:
@@ -206,6 +208,8 @@ class Critic(nn.Module, ABC):
 
         if isinstance(self._obs_space, spaces.Box) and len(self._obs_space.shape) == 1:
             self._obs_dim = self._obs_space.shape[0]
+        if isinstance(self._obs_space, spaces.Box) and len(self._obs_space.shape) == 2:
+            self._obs_dim = self._obs_space.shape[1]
         elif isinstance(self._obs_space, spaces.Discrete):
             self._obs_dim = 1
         else:

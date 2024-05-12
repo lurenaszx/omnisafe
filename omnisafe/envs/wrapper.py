@@ -189,7 +189,7 @@ class ObsNormalize(Wrapper):
         device (torch.device): The torch device to use.
         norm (Normalizer or None, optional): The normalizer to use. Defaults to None.
     """
-
+    #ToDo Add for multiagent
     def __init__(self, env: CMDP, device: torch.device, norm: Normalizer | None = None) -> None:
         """Initialize an instance of :class:`ObsNormalize`."""
         super().__init__(env=env, device=device)
@@ -585,7 +585,7 @@ class Unsqueeze(Wrapper):
         """Initialize an instance of :class:`Unsqueeze`."""
         super().__init__(env=env, device=device)
         assert self.num_envs == 1, 'Unsqueeze only works with single environment'
-        assert isinstance(self.observation_space, spaces.Box), 'Observation space must be Box'
+        assert isinstance(self.observation_space, spaces.Box | spaces.Discrete), 'Observation space must be Box'
 
     def step(
         self,

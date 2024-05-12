@@ -166,13 +166,13 @@ class MultiAlgoWrapper:
             torch.cuda.set_device(self.cfgs.train_cfgs.device)
         os.environ['OMNISAFE_DEVICE'] = self.cfgs.train_cfgs.device
         #ToDo for other types of learning mode
-        self.multi_agents: BaseAlgo = MultiOnPolicyWrapper(
+        self.multi_agents: MultiOnPolicyWrapper = MultiOnPolicyWrapper(
             algo=self.algo,
             env_id=self.env_id,
             cfgs=self.cfgs,
         )
 
-    def learn(self) -> tuple[float, float, float]:
+    def learn(self) -> tuple[float, list[float], float]:
         """Agent learning.
 
         Returns:
