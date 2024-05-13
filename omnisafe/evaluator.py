@@ -23,7 +23,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from gymnasium.spaces import Box
+from gymnasium.spaces import Box, Discrete
 from gymnasium.utils.save_video import save_video
 from torch import nn
 
@@ -170,7 +170,8 @@ class Evaluator:  # pylint: disable=too-many-instance-attributes
                 * torch.ones(1)
             )
         assert isinstance(observation_space, Box), 'The observation space must be Box.'
-        assert isinstance(action_space, Box), 'The action space must be Box.'
+        assert isinstance(action_space, Box) or isinstance(action_space, Discrete),\
+            'The action space must be Box or Discrete.'
 
         if self._cfgs['algo_cfgs']['obs_normalize']:
             obs_normalizer = Normalizer(shape=observation_space.shape, clip=5)
@@ -178,7 +179,8 @@ class Evaluator:  # pylint: disable=too-many-instance-attributes
             self._env = ObsNormalize(self._env, device=torch.device('cpu'), norm=obs_normalizer)
         if self._env.need_time_limit_wrapper:
             self._env = TimeLimit(self._env, device=torch.device('cpu'), time_limit=1000)
-        self._env = ActionScale(self._env, device=torch.device('cpu'), low=-1.0, high=1.0)
+        if isinstance(action_space, Box):
+            self._env = ActionScale(self._env, device=torch.device('cpu'), low=-1.0, high=1.0)
 
         if hasattr(self._cfgs['algo_cfgs'], 'action_repeat'):
             self._env = ActionRepeat(
@@ -299,8 +301,14 @@ class Evaluator:  # pylint: disable=too-many-instance-attributes
                 activation=pi_cfg['activation'],
                 weight_initialization_mode=weight_initialization_mode,
             )
-            self._actor = actor_builder.build_actor(actor_type)
-            self._actor.load_state_dict(model_params['pi'])
+            num_players = env_kwargs.get('num_players', 1)
+            if num_players>1:
+                self._actor = [actor_builder.build_actor(actor_type) for i in range(num_players)]
+                for i in range(num_players):
+                    self._actor[i].load_state_dict(model_params[f'pi_{i}'])
+            else:
+                self._actor = actor_builder.build_actor(actor_type)
+                self._actor.load_state_dict(model_params['pi'])
 
         if self._cfgs['algo'] in ['CRABS']:
             self._init_crabs(model_params)
@@ -423,25 +431,49 @@ class Evaluator:  # pylint: disable=too-many-instance-attributes
         episode_lengths: list[float] = []
 
         for episode in range(num_episodes):
-            obs, _ = self._env.reset()
+            obs, info = self._env.reset()
+            if isinstance(self._actor, list):
+                print(obs)
             self._safety_obs = torch.ones(1)
-            ep_ret, ep_cost, length = 0.0, 0.0, 0.0
-
+            if isinstance(self._actor, list):
+                ep_ret, ep_cost = torch.zeros((len(self._actor))), torch.zeros((len(self._actor)))
+                length = 0.0
+            else:
+                ep_ret, ep_cost, length = 0.0, 0.0, 0.0
             done = False
             while not done:
                 if 'Saute' in self._cfgs['algo'] or 'Simmer' in self._cfgs['algo']:
                     obs = torch.cat([obs, self._safety_obs], dim=-1)
                 with torch.no_grad():
                     if self._actor is not None:
-                        act = self._actor.predict(
-                            obs.reshape(
-                                -1,
-                                obs.shape[-1],  # to make sure the shape is (1, obs_dim)
-                            ),
-                            deterministic=True,
-                        ).reshape(
-                            -1,  # to make sure the shape is (act_dim,)
-                        )
+                        if isinstance(self._actor, list):
+                            current_players = info['current_players']
+                            total_act = []
+                            for player_id in current_players:
+                                act = self._actor[player_id].predict(
+                                    obs[player_id].reshape(
+                                        -1,
+                                        obs.shape[-1],  # to make sure the shape is (1, obs_dim)
+                                    ),
+                                    deterministic=True,
+                                ).reshape(
+                                    -1,  # to make sure the shape is (act_dim,)
+                                )
+                                total_act.append(act)
+                                print(self._actor[player_id](obs[player_id]))
+                                print(obs[player_id])
+                            act = torch.as_tensor(total_act)
+                            print(act)
+                        else:
+                            act = self._actor.predict(
+                                obs.reshape(
+                                    -1,
+                                    obs.shape[-1],  # to make sure the shape is (1, obs_dim)
+                                ),
+                                deterministic=True,
+                            ).reshape(
+                                -1,  # to make sure the shape is (act_dim,)
+                            )
                     elif self._planner is not None:
                         act = self._planner.output_action(
                             obs.unsqueeze(0).to('cpu'),
@@ -452,13 +484,12 @@ class Evaluator:  # pylint: disable=too-many-instance-attributes
                         raise ValueError(
                             'The policy must be provided or created before evaluating the agent.',
                         )
-                obs, rew, cost, terminated, truncated, _ = self._env.step(act)
+                obs, rew, cost, terminated, truncated, info = self._env.step(act)
                 if 'Saute' in self._cfgs['algo'] or 'Simmer' in self._cfgs['algo']:
                     self._safety_obs -= cost.unsqueeze(-1) / self._safety_budget
                     self._safety_obs /= self._cfgs.algo_cfgs.saute_gamma
-
-                ep_ret += rew.item()
-                ep_cost += (cost_criteria**length) * cost.item()
+                ep_ret += rew
+                ep_cost += (cost_criteria**length) * cost
                 if (
                     'EarlyTerminated' in self._cfgs['algo']
                     and ep_cost >= self._cfgs.algo_cfgs.cost_limit
@@ -468,8 +499,8 @@ class Evaluator:  # pylint: disable=too-many-instance-attributes
 
                 done = bool(terminated or truncated)
 
-            episode_rewards.append(ep_ret)
-            episode_costs.append(ep_cost)
+            episode_rewards.append(ep_ret.tolist())
+            episode_costs.append(ep_cost.tolist())
             episode_lengths.append(length)
 
             print(f'Episode {episode} results:')
@@ -479,8 +510,8 @@ class Evaluator:  # pylint: disable=too-many-instance-attributes
 
         print(self._dividing_line)
         print('Evaluation results:')
-        print(f'Average episode reward: {np.mean(a=episode_rewards)}')
-        print(f'Average episode cost: {np.mean(a=episode_costs)}')
+        print(f'Average episode reward: {np.mean(a=episode_rewards, axis=0)}')
+        print(f'Average episode cost: {np.mean(a=episode_costs, axis=0)}')
         print(f'Average episode length: {np.mean(a=episode_lengths)}')
 
         self._env.close()
@@ -561,6 +592,7 @@ class Evaluator:  # pylint: disable=too-many-instance-attributes
                     obs = torch.cat([obs, self._safety_obs], dim=-1)
                 with torch.no_grad():
                     if self._actor is not None:
+
                         act = self._actor.predict(
                             obs.reshape(
                                 -1,

@@ -123,7 +123,7 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
                 total_act.append(act)
                 act_list[player_id], value_r_list[player_id], value_c_list[player_id], logp_list[player_id] = (
                     act, value_r, value_c, logp)
-                obs_list[player_id] = obs[:, player_id].unsqueeze(1)
+                obs_list[player_id] = obs[:, player_id]
 
             next_obs, reward, cost, terminated, truncated, info = self.step(torch.as_tensor(total_act))
             for player_id in range(self.num_players):
@@ -149,6 +149,13 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
 
             for idx, (done, time_out) in enumerate(zip(terminated, truncated)):
                 if epoch_end or done or time_out:
+                    if done or time_out:
+                        self._log_metrics(logger, idx)
+                        self._reset_log(idx)
+
+                        self._ep_ret[idx] = 0.0
+                        self._ep_cost[idx] = 0.0
+                        self._ep_len[idx] = 0.0
                     for player_id in range(self.num_players):
                         last_value_r = torch.zeros(1)
                         last_value_c = torch.zeros(1)
@@ -161,14 +168,6 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
                             if isinstance(agent, ConstraintActorCritic):
                                 last_value_r = last_value_r.unsqueeze(0)
                                 last_value_c = last_value_c.unsqueeze(0)
-
-                        if done or time_out:
-                            self._log_metrics(logger, idx)
-                            self._reset_log(idx)
-
-                            self._ep_ret[idx] = 0.0
-                            self._ep_cost[idx] = 0.0
-                            self._ep_len[idx] = 0.0
                         if act_list[player_id] is not None:
                             buffer[player_id].store(
                                 obs=obs_list[player_id],
@@ -203,7 +202,7 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
         for player_id in range(self.num_players):
             self._ep_ret[player_id] += info.get('original_reward', reward).cpu()[:, player_id]
             self._ep_cost[player_id] += info.get('original_cost', cost).cpu()[:, player_id]
-            self._ep_len += 1
+        self._ep_len += 1
 
     def _log_metrics(self, logger: Logger, idx: int) -> None:
         """Log metrics, including ``EpRet``, ``EpCost``, ``EpLen``.

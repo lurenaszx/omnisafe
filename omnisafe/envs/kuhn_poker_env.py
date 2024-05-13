@@ -95,9 +95,8 @@ class KuhnPokerEnv(CMDP):
         self._observation_space = Box(low=0, high=1, shape=[self.number_of_players, obs_len], dtype=np.float32)
         self.state_space_size = None  # TODO len(self.random_initial_state_vector())
 
-        self.betting_history_index = (self.number_of_players +
-                                      self.number_of_players * self.deck_size)
-        self.betting_round_offset = self.number_of_players * (1 + len(ActionType))
+        self.betting_history_index = (2 * self.number_of_players)
+        self.betting_round_offset = self.number_of_players * len(ActionType)
 
     def set_seed(self, seed: int) -> None:
         random.seed(seed)
@@ -109,6 +108,7 @@ class KuhnPokerEnv(CMDP):
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         if seed is not None:
             self.set_seed(seed)
+        self.player_pot = [self.ante for _ in range(self.number_of_players)]
         self.done = False
         self.current_player = 0
         self.history: List[ActionType] = []
@@ -153,24 +153,23 @@ class KuhnPokerEnv(CMDP):
         return [0] * self.number_of_players
 
     def update_state(self, player_id, move):
+        # print(self.state)
         self.history.append(move)
 
         if self.first_to_bet is None:
             player_move_index = self.betting_history_index
         else:
             player_move_index = self.betting_history_index + self.betting_round_offset
-        player_move_index += self.current_player * (1 + len(ActionType))
+        player_move_index += self.current_player * len(ActionType)
         if move == ActionType.PASS:
-            self.state[player_move_index] = 0
-            self.state[player_move_index + 1] = 1
+            self.state[player_move_index] = 1
         if move == ActionType.BET:
-            self.state[player_move_index] = 0
-            self.state[player_move_index + 2] = 1
+            self.state[player_move_index + 1] = 1
             if self.first_to_bet is None:
                 self.first_to_bet = player_id
                 self.elegible_players = []
             self.elegible_players += [player_id]
-            self.state[-self.number_of_players + player_id] += 1
+            self.player_pot[player_id] += 1
 
         # Update current player
         self.state[self.current_player] = 0
@@ -185,21 +184,18 @@ class KuhnPokerEnv(CMDP):
 
     def get_winner(self):
         base_i = self.number_of_players
-        player_hand = lambda p_i: slice(base_i + p_i * self.deck_size,
-                                        base_i + p_i * self.deck_size + self.deck_size)
-        player_hands = [self.state[player_hand(i)] for i in self.elegible_players]
-        card_values = [hand.index(1) for hand in player_hands]
-        max_card = max(card_values)
-        winner = self.elegible_players[card_values.index(max_card)]
+        player_hands = [self.state[i+base_i] for i in self.elegible_players]
+        max_card = max(player_hands)
+        winner = self.elegible_players[player_hands.index(max_card)]
         return winner
 
     def get_total_pot(self):
-        return sum(self.state[-self.number_of_players:])
+        return sum(self.player_pot)
 
     def get_player_pot(self, player_id):
         assert 0 <= player_id < self.number_of_players, \
             f"Player id must be in [0, {self.number_of_players}]"
-        return self.state[-self.number_of_players + player_id]
+        return self.player_pot[player_id]
 
     def reward_vector_for_winner(self, winner: int):
         assert 0 <= winner < self.number_of_players, \
@@ -228,28 +224,16 @@ class KuhnPokerEnv(CMDP):
         # Deal 1 card to each player
         dealt_cards_per_player = np.random.choice(range(self.deck_size),
                                                   size=self.number_of_players,
-                                                  replace=False)
-        player_hands = self.vector_from_dealt_hands(dealt_cards_per_player)
+                                                  replace=False).tolist()
 
         betting_history_vector = []
         for _ in range(self.betting_rounds):
             for _ in range(self.number_of_players):
-                betting_history_vector += [1] + ([0] * len(ActionType))
+                betting_history_vector += [0] * len(ActionType)
 
-        pot_contributions = [self.ante] * self.number_of_players
-        return player_turn + player_hands + \
-            betting_history_vector + \
-            pot_contributions
+        return player_turn + dealt_cards_per_player + \
+            betting_history_vector
 
-    def vector_from_dealt_hands(self, dealt_cards_per_player):
-        player_hands = [[0] * self.deck_size
-                        for _ in range(self.number_of_players)]
-        player_hands = []
-        for dealt_card in dealt_cards_per_player:
-            hand = [0] * self.deck_size
-            hand[dealt_card] = 1
-            player_hands += hand
-        return player_hands
 
     def observation_from_state(self, player_id: int):
         '''
@@ -270,17 +254,17 @@ class KuhnPokerEnv(CMDP):
         encoded_id[player_id] = 1
 
         dealt_cards_start_index = self.number_of_players
-        player_card_index = dealt_cards_start_index + (player_id * self.deck_size)
-        player_card = self.state[player_card_index: player_card_index + self.deck_size]
+        player_card_index = dealt_cards_start_index + player_id
+        player_card = [self.state[player_card_index]]
 
-        betting_history_start_index = dealt_cards_start_index + (self.number_of_players * self.deck_size)
+        betting_history_start_index = dealt_cards_start_index + self.number_of_players
         betting_history_and_pot = self.state[betting_history_start_index:]
 
         return encoded_id + player_card + betting_history_and_pot
 
     def calculate_observation_space(self):
-        single_len = self.number_of_players+self.deck_size+(len(ActionType) + 1)*self.number_of_players\
-                     *self.betting_rounds + self.number_of_players
+        single_len = self.number_of_players+1+(len(ActionType))*self.number_of_players\
+                     *self.betting_rounds
         return single_len
 
     def render(self, mode='human', close=False):
@@ -292,7 +276,7 @@ class KuhnPokerEnv(CMDP):
 if __name__ == "__main__":
     env = KuhnPokerEnv(env_id='Example-v0')
     env.reset(seed=0)
-    while True:
+    for _ in range(1000):
         action = env.action_space.sample()
         print(f'action:{action}')
         obs, reward, cost, terminated, truncated, info = env.step(torch.as_tensor(action))
@@ -304,5 +288,5 @@ if __name__ == "__main__":
         print(f'truncated: {truncated}')
         print('*' * 20)
         if terminated or truncated:
-            break
+            env.reset(seed = 0)
     env.close()

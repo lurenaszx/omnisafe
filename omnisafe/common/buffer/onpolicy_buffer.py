@@ -142,7 +142,6 @@ class OnPolicyBuffer(BaseBuffer):  # pylint: disable=too-many-instance-attribute
         """
         assert self.ptr < self.max_size, 'No more space in the buffer!'
         for key, value in data.items():
-            # print(key, value)
             self.data[key][self.ptr] = value
         self.ptr += 1
 
@@ -217,8 +216,7 @@ class OnPolicyBuffer(BaseBuffer):  # pylint: disable=too-many-instance-attribute
         Returns:
             The data stored and calculated in the buffer.
         """
-        self.ptr, self.path_start_idx = 0, 0
-
+        # print(self.ptr, self.path_start_idx)
         data = {
             'obs': self.data['obs'],
             'act': self.data['act'],
@@ -229,7 +227,11 @@ class OnPolicyBuffer(BaseBuffer):  # pylint: disable=too-many-instance-attribute
             'adv_c': self.data['adv_c'],
             'target_value_c': self.data['target_value_c'],
         }
+        if self.ptr < self.size:
+            data = {k: v[:self.ptr] for k, v in data.items()}
+        self.ptr, self.path_start_idx = 0, 0
 
+        # print(data)
         adv_mean, adv_std, *_ = distributed.dist_statistics_scalar(data['adv_r'])
         cadv_mean, *_ = distributed.dist_statistics_scalar(data['adv_c'])
         if self._standardized_adv_r:

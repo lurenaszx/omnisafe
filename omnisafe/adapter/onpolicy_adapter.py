@@ -93,9 +93,10 @@ class OnPolicyAdapter(OnlineAdapter):
 
             self._log_value(reward=reward, cost=cost, info=info)
 
-            if self._cfgs.algo_cfgs.use_cost:
-                logger.store({'Value/cost': value_c})
-            logger.store({'Value/reward': value_r})
+            if isinstance(agent, ConstraintActorCritic):
+                if self._cfgs.algo_cfgs.use_cost:
+                    logger.store({'Value/cost': value_c})
+                logger.store({'Value/reward': value_r})
 
             buffer.store(
                 obs=obs,

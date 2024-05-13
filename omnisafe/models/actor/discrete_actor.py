@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Implementation of GaussianLearningActor."""
+"""Implementation of DiscreteActor."""
 
 from __future__ import annotations
 
@@ -55,7 +55,6 @@ class DiscreteActor(Actor):
         self.net: nn.Module = build_mlp_network(
             sizes=[self._obs_dim, *self._hidden_sizes, self._act_dim],
             activation=activation,
-            output_activation='softmax',
             weight_initialization_mode=weight_initialization_mode,
         )
 
@@ -72,40 +71,29 @@ class DiscreteActor(Actor):
         Returns:
             The distribution over different actions.
         """
-        prob = self.net(obs)
-        return Categorical(prob)
+        logits_prob = self.net(obs)
+        return Categorical(logits=logits_prob)
 
     def predict(self, obs: torch.Tensor, deterministic: bool = False) -> torch.Tensor:
         """Predict the action given observation.
-
-        The predicted action depends on the ``deterministic`` flag.
-
-        - If ``deterministic`` is ``True``, the predicted action is the mean of the distribution.
-        - If ``deterministic`` is ``False``, the predicted action is sampled from the distribution.
-
-        Args:
-            obs (torch.Tensor): Observation from environments.
-            deterministic (bool, optional): Whether to use deterministic policy. Defaults to False.
-
-        Returns:
-            The mean of the distribution if deterministic is True, otherwise the sampled action.
+        Currently deterministic has not been used.
         """
         self._current_dist = self._distribution(obs)
         self._after_inference = True
         return self._current_dist.sample()
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor) -> Distribution:
         """Forward method.
 
         Args:
             obs (torch.Tensor): Observation from environments.
 
         Returns:
-            The current distribution.
+            The prob of all actions.
         """
-        prob = self.net(obs)
+        self._current_dist = self._distribution(obs)
         self._after_inference = True
-        return prob
+        return self._current_dist
 
     def log_prob(self, act: torch.Tensor) -> torch.Tensor:
         """Compute the log probability of the action given the current distribution.
@@ -124,6 +112,7 @@ class DiscreteActor(Actor):
         return self._current_dist.log_prob(act).sum(axis=-1)
 
     def log_prob_all(self) -> torch.Tensor:
+        """ compute the log probability of all actions"""
         assert self._after_inference, 'log_prob() should be called after predict() or forward()'
         self._after_inference = False
         return self._current_dist.logits

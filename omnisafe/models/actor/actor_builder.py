@@ -65,6 +65,7 @@ class ActorBuilder:
             - ``gaussian_learning``: Gaussian actor with learnable standard deviation parameters.
             - ``gaussian_sac``: Gaussian actor with learnable standard deviation network.
             - ``mlp``: Multi-layer perceptron actor, used in ``DDPG`` and ``TD3``.
+            - ``discrete``: Discrete actor with linear layer for discrete action space
 
         Args:
             actor_type (ActorType): Type of actor network, e.g. ``gaussian_learning``.

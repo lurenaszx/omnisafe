@@ -82,7 +82,8 @@ class QCritic(Critic):
         )
         self.net_lst: list[nn.Sequential] = []
         for idx in range(self._num_critics):
-            if self._use_obs_encoder:       #ToDO assert for discrete action
+            if self._use_obs_encoder:
+                assert isinstance(act_space, Box), "Only for box"
                 obs_encoder = build_mlp_network(
                     [self._obs_dim, hidden_sizes[0]],
                     activation=activation,

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Implementation of the Policy Gradient algorithm."""
+"""Implementation of the Multi-Agent On-Policy Wrapper."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ class MultiOnPolicyWrapper:
         )
 
     def _init_model(self) -> None:
-        """Initialize the agent according to the number of agents.
+        """Initialize the agents according to the number of agents and its algo type.
 
         OmniSafe uses :class:`omnisafe.models.actor_critic.constraint_actor_critic.ConstraintActorCritic`
         as the default model.
@@ -89,16 +89,6 @@ class MultiOnPolicyWrapper:
             cfgs=self._cfgs,
         ) for i in range(self._num_players)]
         self._models = [agent.actor_critic for agent in self._agents]
-        #ToDo Add below things
-
-        # if distributed.world_size() > 1:
-        #     distributed.sync_params(self._agents)
-        #
-        # if self._cfgs.model_cfgs.exploration_noise_anneal:
-        #     self._agents.set_annealing(
-        #         epochs=[0, self._cfgs.train_cfgs.epochs],
-        #         std=self._cfgs.model_cfgs.std_range,
-        #     )
 
     def __init__(self, algo: str, env_id: str, cfgs: Config) -> None:
         """The initialization of the algorithm.
@@ -140,23 +130,21 @@ class MultiOnPolicyWrapper:
         +=======================+======================================================================+
         | Train/Epoch           | Current epoch.                                                       |
         +-----------------------+----------------------------------------------------------------------+
-        | Metrics/EpCost        | Average cost of the epoch.                                           |
+        | Metrics/EpCost_id     | Average cost of the epoch for every player.                          |
         +-----------------------+----------------------------------------------------------------------+
-        | Metrics/EpRet         | Average return of the epoch.                                         |
+        | Metrics/EpRet_id      | Average return of the epoch for every player.                        |
         +-----------------------+----------------------------------------------------------------------+
         | Metrics/EpLen         | Average length of the epoch.                                         |
         +-----------------------+----------------------------------------------------------------------+
-        | Loss/Loss_pi          | Loss of the policy network.                                          |
+        | Loss/Loss_pi_id       | Loss of the policy network for every player.                         |
         +-----------------------+----------------------------------------------------------------------+
-        | Loss/Loss_cost_critic | Loss of the cost critic network.                                     |
+        | Loss/Loss_cost_critic_id| Loss of the cost critic network for every player.                  |
         +-----------------------+----------------------------------------------------------------------+
-        | Train/Entropy         | Entropy of the policy network.                                       |
+        | Train/Entropy_id      | Entropy of the policy network for every player.                      |
         +-----------------------+----------------------------------------------------------------------+
-        | Train/StopIters       | Number of iterations of the policy network.                          |
-        +-----------------------+----------------------------------------------------------------------+
-        | Train/PolicyRatio     | Ratio of the policy network.                                         |
-        +-----------------------+----------------------------------------------------------------------+
-        | Train/LR              | Learning rate of the policy network.                                 |
+        | Train/StopIters_id    | Number of iterations of the policy network for every player.         |
+        +-----------------------+--------------------------------------------------------------------
+        | Train/LR_id           | Learning rate of the policy network for every player.                |
         +-----------------------+----------------------------------------------------------------------+
         | Misc/Seed             | Seed of the experiment.                                              |
         +-----------------------+----------------------------------------------------------------------+
@@ -194,8 +182,14 @@ class MultiOnPolicyWrapper:
 
         self._logger.register_key('TotalEnvSteps')
         for player_id in range(self._num_players):
-            self._logger.register_key(f'Metrics/EpRet_{player_id}')
-            self._logger.register_key(f'Metrics/EpCost_{player_id}')
+            self._logger.register_key(
+                f'Metrics/EpRet_{player_id}',
+                window_length=self._cfgs.logger_cfgs.window_lens
+            )
+            self._logger.register_key(
+                f'Metrics/EpCost_{player_id}',
+                window_length=self._cfgs.logger_cfgs.window_lens
+            )
             self._logger.register_key(f'Train/Entropy_{player_id}')
             self._logger.register_key(f'Train/LR_{player_id}')
             self._logger.register_key(f'Train/KL_{player_id}')
@@ -220,7 +214,7 @@ class MultiOnPolicyWrapper:
         for env_spec_key in self._env.env_spec_keys:
             self._logger.register_key(env_spec_key)
 
-    def learn(self) -> tuple[float, list[float], float]:
+    def learn(self) -> tuple[list[float], list[float], float]:
         """This is main function for algorithm update.
 
         It is divided into the following steps:
@@ -270,7 +264,7 @@ class MultiOnPolicyWrapper:
                 epoch + 1
             ) == self._cfgs.train_cfgs.epochs:
                 self._logger.torch_save()
-        ep_ret = 0
+        ep_ret = [self._logger.get_stats(f'Metrics/EpRet_{i}')[0] for i in range(self._num_players)]
         ep_cost = [self._logger.get_stats(f'Metrics/EpCost_{i}')[0] for i in range(self._num_players)]
         ep_len = self._logger.get_stats('Metrics/EpLen')[0]
         self._logger.close()
@@ -284,3 +278,6 @@ class MultiOnPolicyWrapper:
             agent._update(self._logger, player_id)
 
 
+    @property
+    def logger(self):
+        return self._logger

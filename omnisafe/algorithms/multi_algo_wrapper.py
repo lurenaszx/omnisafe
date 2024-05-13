@@ -31,10 +31,10 @@ from omnisafe.utils.config import Config, check_all_configs, get_default_kwargs_
 from omnisafe.utils.plotter import Plotter
 from omnisafe.utils.tools import recursive_check_config
 from omnisafe.algorithms.on_policy import MultiOnPolicyWrapper
+from omnisafe.algorithms.algo_wrapper import AlgoWrapper
 
-
-class MultiAlgoWrapper:
-    """Algo Wrapper for algorithms.
+class MultiAlgoWrapper(AlgoWrapper):
+    """Multi Algo Wrapper for algorithms in the multi-agents environments.
 
     Args:
         algo (str): The algorithm name.
@@ -53,25 +53,6 @@ class MultiAlgoWrapper:
     """
 
     algo_type: str
-
-    def __init__(
-        self,
-        algo: str,
-        env_id: str,
-        train_terminal_cfgs: dict[str, Any] | None = None,
-        custom_cfgs: dict[str, Any] | None = None,
-    ) -> None:
-        """Initialize an instance of :class:`AlgoWrapper`."""
-        self.algo: str = algo
-        self.env_id: str = env_id
-        # algo_type will set in _init_checks()
-        self.train_terminal_cfgs: dict[str, Any] | None = train_terminal_cfgs
-        self.custom_cfgs: dict[str, Any] | None = custom_cfgs
-        self._evaluator: Evaluator | None = None
-        self._plotter: Plotter | None = None
-        self.cfgs: Config = self._init_config()
-        self._init_checks()
-        self._init_algo()
 
     def _init_config(self) -> Config:
         """Initialize config.
@@ -138,15 +119,6 @@ class MultiAlgoWrapper:
             )
         return cfgs
 
-    def _init_checks(self) -> None:
-        """Initial checks."""
-        assert isinstance(self.algo, str), 'algo must be a string!'
-        assert isinstance(self.cfgs.train_cfgs.parallel, int), 'parallel must be an integer!'
-        assert self.cfgs.train_cfgs.parallel > 0, 'parallel must be greater than 0!'
-        assert (
-            self.env_id in support_envs()
-        ), f"{self.env_id} doesn't exist. Please choose from {support_envs()}."
-
     def _init_algo(self) -> None:
         """Initialize the algorithm."""
         check_all_configs(self.cfgs, self.algo_type)
@@ -172,48 +144,17 @@ class MultiAlgoWrapper:
             cfgs=self.cfgs,
         )
 
-    def learn(self) -> tuple[float, list[float], float]:
+    def learn(self) -> tuple[list[float], list[float], float]:
         """Agent learning.
 
         Returns:
             ep_ret: The episode return of the final episode.
-            ep_cost: The episode cost of the final episode.
-            ep_len: The episode length of the final episode.
+            ep_cost: The episode cost of the final episode for each agent.
+            ep_len: The episode length of the final episode for each agent.
         """
         ep_ret, ep_cost, ep_len = self.multi_agents.learn()
-
         self._init_statistical_tools()
-
         return ep_ret, ep_cost, ep_len
-
-    def _init_statistical_tools(self) -> None:
-        """Initialize statistical tools."""
-        self._evaluator = Evaluator()
-        self._plotter = Plotter()
-
-    def plot(self, smooth: int = 1) -> None:
-        """Plot the training curve.
-
-        Args:
-            smooth (int, optional): window size, for smoothing the curve. Defaults to 1.
-
-        Raises:
-            AssertionError: If the :meth:`learn` method has not been called.
-        """
-        assert self._plotter is not None, 'Please run learn() first!'
-        self._plotter.make_plots(
-            [self.agent.logger.log_dir],
-            None,
-            'Steps',
-            'Rewards',
-            False,
-            self.agent.cost_limit,
-            smooth,
-            None,
-            None,
-            'mean',
-            self.agent.logger.log_dir,
-        )
 
     def evaluate(self, num_episodes: int = 10, cost_criteria: float = 1.0) -> None:
         """Agent Evaluation.
@@ -226,47 +167,10 @@ class MultiAlgoWrapper:
             AssertionError: If the :meth:`learn` method has not been called.
         """
         assert self._evaluator is not None, 'Please run learn() first!'
-        scan_dir = os.scandir(os.path.join(self.agent.logger.log_dir, 'torch_save'))
+        scan_dir = os.scandir(os.path.join(self.multi_agents.logger.log_dir, 'torch_save'))
         for item in scan_dir:
             if item.is_file() and item.name.split('.')[-1] == 'pt':
-                self._evaluator.load_saved(save_dir=self.agent.logger.log_dir, model_name=item.name)
+                self._evaluator.load_saved(save_dir=self.multi_agents.logger.log_dir, model_name=item.name)
                 self._evaluator.evaluate(num_episodes=num_episodes, cost_criteria=cost_criteria)
-        scan_dir.close()
-
-    # pylint: disable-next=too-many-arguments
-    def render(
-        self,
-        num_episodes: int = 10,
-        render_mode: str = 'rgb_array',
-        camera_name: str = 'track',
-        width: int = 256,
-        height: int = 256,
-    ) -> None:
-        """Evaluate and render some episodes.
-
-        Args:
-            num_episodes (int, optional): The number of episodes to render. Defaults to 10.
-            render_mode (str, optional): The render mode, can be 'rgb_array', 'depth_array' or
-                'human'. Defaults to 'rgb_array'.
-            camera_name (str, optional): the camera name, specify the camera which you use to
-                capture images. Defaults to 'track'.
-            width (int, optional): The width of the rendered image. Defaults to 256.
-            height (int, optional): The height of the rendered image. Defaults to 256.
-
-        Raises:
-            AssertionError: If the :meth:`learn` method has not been called.
-        """
-        assert self._evaluator is not None, 'Please run learn() first!'
-        scan_dir = os.scandir(os.path.join(self.agent.logger.log_dir, 'torch_save'))
-        for item in scan_dir:
-            if item.is_file() and item.name.split('.')[-1] == 'pt':
-                self._evaluator.load_saved(
-                    save_dir=self.agent.logger.log_dir,
-                    model_name=item.name,
-                    render_mode=render_mode,
-                    camera_name=camera_name,
-                    width=width,
-                    height=height,
-                )
-                self._evaluator.render(num_episodes=num_episodes)
+            print("\n#############################################################################\n")
         scan_dir.close()
