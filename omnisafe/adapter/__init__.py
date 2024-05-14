@@ -22,4 +22,4 @@ from omnisafe.adapter.online_adapter import OnlineAdapter
 from omnisafe.adapter.onpolicy_adapter import OnPolicyAdapter
 from omnisafe.adapter.saute_adapter import SauteAdapter
 from omnisafe.adapter.simmer_adapter import SimmerAdapter
-from omnisafe.adapter.multiagent_adapter import MultiAgentOnPolicyAdapter
+from omnisafe.adapter.multi_onpolicy_adapter import MultiOnPolicyAdapter

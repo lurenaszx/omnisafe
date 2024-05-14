@@ -25,7 +25,7 @@ from rich.progress import track
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.utils.data import DataLoader, TensorDataset
 
-from omnisafe.adapter import MultiAgentOnPolicyAdapter
+from omnisafe.adapter import MultiOnPolicyAdapter
 from omnisafe.algorithms import registry
 from omnisafe.algorithms.base_algo import BaseAlgo
 from omnisafe.common.buffer import VectorOnPolicyBuffer
@@ -43,7 +43,7 @@ class MultiOnPolicyWrapper:
     def _init_env(self) -> None:
         """Initialize the environment.
 
-        OmniSafe uses :class:`omnisafe.adapter.OnPolicyAdapter` to adapt the environment to the
+        OmniSafe uses :class:`omnisafe.adapter.MultiOnPolicyAdapter` to adapt the environment to the
         algorithm.
 
         User can customize the environment by inheriting this method.
@@ -56,7 +56,7 @@ class MultiOnPolicyWrapper:
             AssertionError: If the number of steps per epoch is not divisible by the number of
                 environments.
         """
-        self._env: MultiAgentOnPolicyAdapter = MultiAgentOnPolicyAdapter(
+        self._env: MultiOnPolicyAdapter = MultiOnPolicyAdapter(
             self._env_id,
             self._cfgs.train_cfgs.vector_env_nums,
             self._seed,
@@ -273,7 +273,7 @@ class MultiOnPolicyWrapper:
         return ep_ret, ep_cost, ep_len
 
     def _update(self) -> None:
-        #Update actor, critic for all agents
+        # Update ActorCritic for all agents
         for player_id, agent in enumerate(self._agents):
             agent._update(self._logger, player_id)
 

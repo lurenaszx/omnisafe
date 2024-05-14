@@ -293,6 +293,11 @@ class QPG(PolicyGradient):
                 {
                     'Train/StopIter': update_counts,  # pylint: disable=undefined-loop-variable
                     'Train/KL': final_kl,
+                    'Train/LR': (
+                        0.0
+                        if self._cfgs.model_cfgs.actor.lr is None
+                        else self._actor_critic.actor_scheduler.get_last_lr()[0]
+                    ),
                 },
             )
         else:
@@ -300,6 +305,11 @@ class QPG(PolicyGradient):
                 {
                     f'Train/StopIter_{player_id}': update_counts,  # pylint: disable=undefined-loop-variable
                     f'Train/KL_{player_id}': final_kl,
+                    f'Train/LR_{player_id}': (
+                        0.0
+                        if self._cfgs.model_cfgs.actor.lr is None
+                        else self._actor_critic.actor_scheduler.get_last_lr()[0]
+                    ),
                 },
             )
 
@@ -430,6 +440,8 @@ class QPG(PolicyGradient):
             )
         distributed.avg_grads(self._actor_critic.actor)
         self._actor_critic.actor_optimizer.step()
+        print(torch.cat([obs, act, self._actor_critic.reward_critic(obs)[0],
+                             self._actor_critic.actor(obs).probs], dim=1)[:5])
 
     def _loss_pi(
         self,
@@ -456,9 +468,9 @@ class QPG(PolicyGradient):
         baseline = torch.sum(torch.mul(prob, q_value.detach()), dim=1)
         advantages = q_value - torch.unsqueeze(baseline, 1)
         policy_advantages = torch.sum(-torch.mul(prob, advantages.detach()))
-        print(torch.cat([obs, act, self._actor_critic.reward_critic(obs)[0],
-                             self._actor_critic.actor(obs).probs, advantages], dim=1)[:5])
+
         loss = torch.mean(policy_advantages, dim=0)
+        # loss -= self._cfgs.algo_cfgs.entropy_coef * distribution.entropy().mean()
         entropy = torch.distributions.Categorical(prob).entropy().mean().item()
         if logger is None:
             self._logger.store(

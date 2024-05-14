@@ -100,7 +100,12 @@ class ActorQCritic(nn.Module):
 
         if model_cfgs.actor.lr is not None:
             self.actor_optimizer: optim.Optimizer
-            self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=model_cfgs.actor.lr)
+            opt_type = model_cfgs.actor.get("opt", "adam")
+            if opt_type == "adam":
+                self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=model_cfgs.actor.lr)
+            elif opt_type == "sgd":
+                self.actor_optimizer = optim.SGD(self.actor.parameters(), lr=model_cfgs.actor.lr)
+            print(self.actor_optimizer)
         if model_cfgs.critic.lr is not None:
             self.reward_critic_optimizer: optim.Optimizer
             self.reward_critic_optimizer = optim.Adam(

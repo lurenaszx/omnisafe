@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 import torch
 from omnisafe.typing import DEVICE_CPU
 import random
+from omnisafe.models.actor_critic.constraint_actor_q_critic import ConstraintActorQCritic
 
 class ActionType(enum.Enum):
     Rock = 0
@@ -18,7 +19,7 @@ class ActionType(enum.Enum):
 @env_register
 class RockPaperScissorsEnv(CMDP):
     '''
-    Implementation of Kuhn's poker in accordance to OpenAI gym environment interface.
+    Implementation of RockPaperScissorsEnv in accordance to OpenAI gym environment interface.
     '''
 
     need_auto_reset_wrapper = True
@@ -52,6 +53,8 @@ class RockPaperScissorsEnv(CMDP):
         self._action_space_size = len(ActionType)
 
         self._observation_space = Box(low=0, high=0, shape=(self.number_of_players, 1), dtype=np.float32)
+
+        self.env_spec_log = {'Env/prob_rock': 0.0, 'Env/prob_paper': 0.0, 'Env/prob_scissor': 0.0}
 
     def set_seed(self, seed: int) -> None:
         random.seed(seed)
@@ -90,7 +93,12 @@ class RockPaperScissorsEnv(CMDP):
         )
         return obs, reward, cost, terminated, truncated, info
 
-
+    def spec_log(self, logger, policy: list[ConstraintActorQCritic]) -> dict[str, Any]:
+        res = policy[0].actor(torch.tensor([0.0], dtype=torch.float32))\
+                      .probs.detach().numpy()
+        logger.store({'Env/prob_rock': float(res[0])})
+        logger.store({'Env/prob_paper': float(res[1])})
+        logger.store({'Env/prob_scissor': float(res[2])})
 
     def render(self, mode='human', close=False):
         raise NotImplementedError('Rendering has not been coded yet')

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Any
 
 import numpy
@@ -31,10 +32,10 @@ from omnisafe.models.actor_critic.constraint_actor_q_critic import ConstraintAct
 from omnisafe.utils.config import Config
 from omnisafe.algorithms.base_algo import BaseAlgo
 
-class MultiAgentOnPolicyAdapter(OnlineAdapter):
-    """OnPolicy Adapter for OmniSafe.
+class MultiOnPolicyAdapter(OnlineAdapter):
+    """MultiOnPolicy Adapter for OmniSafe in the multi-agent environment.
 
-    :class:`OnPolicyAdapter` is used to adapt the environment to the on-policy training.
+    :class:`MultiOnPolicyAdapter` is used to adapt the Multi-agent environment to the on-policy training.
 
     Args:
         env_id (str): The environment id.
@@ -120,6 +121,10 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
                     )
                     reward_list[player_id], cost_list[player_id] = self.init_value(), self.init_value()
                 act, value_r, value_c, logp = wrap_step(agent[player_id], obs[:, player_id].unsqueeze(1))
+                # Add random to ensure the exploration
+                # print(act)
+                if random.random() < 0.05:
+                    act = torch.as_tensor([[self._env.action_space.sample()]])
                 total_act.append(act)
                 act_list[player_id], value_r_list[player_id], value_c_list[player_id], logp_list[player_id] = (
                     act, value_r, value_c, logp)
@@ -150,7 +155,7 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
             for idx, (done, time_out) in enumerate(zip(terminated, truncated)):
                 if epoch_end or done or time_out:
                     if done or time_out:
-                        self._log_metrics(logger, idx)
+                        self._log_metrics(logger, agent, idx)
                         self._reset_log(idx)
 
                         self._ep_ret[idx] = 0.0
@@ -204,7 +209,7 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
             self._ep_cost[player_id] += info.get('original_cost', cost).cpu()[:, player_id]
         self._ep_len += 1
 
-    def _log_metrics(self, logger: Logger, idx: int) -> None:
+    def _log_metrics(self, logger: Logger, agents: list[ConstraintActorQCritic], idx: int) -> None:
         """Log metrics, including ``EpRet``, ``EpCost``, ``EpLen``.
 
         Args:
@@ -212,7 +217,7 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
             idx (int): The index of the environment.
         """
         if hasattr(self._env, 'spec_log'):
-            self._env.spec_log(logger)
+            self._env.spec_log(logger, agents)
         logger.store({'Metrics/EpLen': self._ep_len[idx]})
         for player_id in range(self.num_players):
             logger.store(
@@ -238,8 +243,5 @@ class MultiAgentOnPolicyAdapter(OnlineAdapter):
             self._ep_cost[:, idx] = 0.0
             self._ep_len[idx] = 0.0
 
-if __name__ == '__main__':
-
-    env = MultiAgentOnPolicyAdapter("Rock-Paper-Scissors-v0", num_envs=1, seed=0, cfgs=Config())
 
 

@@ -22,6 +22,7 @@ from omnisafe.common.logger import Logger
 from omnisafe.algorithms import registry
 from omnisafe.algorithms.on_policy.base.qpg import QPG
 import torch.nn.functional as F
+from torch import nn
 
 @registry.register
 class RMPG(QPG):
@@ -52,7 +53,9 @@ class RMPG(QPG):
         Returns:
             The loss of pi/actor.
         """
-        prob = self._actor_critic.actor(obs)
+        distribution = self._actor_critic.actor(obs)
+        logits = distribution.logits
+        prob = nn.functional.softmax(logits, dim=1)
         q_value = q_value.detach()
         baseline = torch.sum(torch.mul(prob, q_value.detach()), dim=1)
         advantages = F.relu(q_value - torch.unsqueeze(baseline, 1))

@@ -22,6 +22,7 @@ from omnisafe.common.logger import Logger
 from omnisafe.algorithms import registry
 from omnisafe.algorithms.on_policy.base.qpg import QPG
 import torch.nn.functional as F
+from torch import nn
 
 @registry.register
 class RPG(QPG):
@@ -52,13 +53,15 @@ class RPG(QPG):
         Returns:
             The loss of pi/actor.
         """
-        prob = self._actor_critic.actor(obs)
+        distribution = self._actor_critic.actor(obs)
+        prob = distribution.probs
         q_value = q_value.detach()
         baseline = torch.sum(torch.mul(prob, q_value.detach()), dim=1)
-        advantages = torch.sum(F.relu(q_value - torch.unsqueeze(baseline, 1)))
-
+        advantages = torch.sum(F.relu(q_value.detach() - torch.unsqueeze(baseline, 1)
+                                      - torch.tensor([0.001]).unsqueeze(1)), dim=1)
         loss = torch.mean(advantages, dim=0)
-        entropy = torch.distributions.Categorical(prob).entropy().mean().item()
+        entropy = distribution.entropy().mean().item()
+        loss -= self._cfgs.algo_cfgs.entropy_coef * entropy
         if logger is None:
             self._logger.store(
                 {
