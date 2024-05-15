@@ -57,11 +57,11 @@ class RPG(QPG):
         prob = distribution.probs
         q_value = q_value.detach()
         baseline = torch.sum(torch.mul(prob, q_value.detach()), dim=1)
-        advantages = torch.sum(F.relu(q_value.detach() - torch.unsqueeze(baseline, 1)
-                                      - torch.tensor([0.001]).unsqueeze(1)), dim=1)
+        advantages = (torch.sum(F.relu(q_value.detach() - torch.unsqueeze(baseline, 1)
+                                      - torch.tensor([0.001]).unsqueeze(1)), dim=1)) - \
+                      self._cfgs.algo_cfgs.entropy_coef * distribution.entropy()
         loss = torch.mean(advantages, dim=0)
         entropy = distribution.entropy().mean().item()
-        loss -= self._cfgs.algo_cfgs.entropy_coef * entropy
         if logger is None:
             self._logger.store(
                 {

@@ -440,8 +440,8 @@ class QPG(PolicyGradient):
             )
         distributed.avg_grads(self._actor_critic.actor)
         self._actor_critic.actor_optimizer.step()
-        print(torch.cat([obs, act, self._actor_critic.reward_critic(obs)[0],
-                             self._actor_critic.actor(obs).probs], dim=1)[:5])
+        # print(torch.cat([obs, act, self._actor_critic.reward_critic(obs)[0],
+        #                      self._actor_critic.actor(obs).probs], dim=1)[:5])
 
     def _loss_pi(
         self,
@@ -467,11 +467,14 @@ class QPG(PolicyGradient):
         q_value = q_value.detach()
         baseline = torch.sum(torch.mul(prob, q_value.detach()), dim=1)
         advantages = q_value - torch.unsqueeze(baseline, 1)
-        policy_advantages = torch.sum(-torch.mul(prob, advantages.detach()))
+        policy_advantages = torch.sum(-torch.mul(prob, advantages.detach())) -\
+                      self._cfgs.algo_cfgs.entropy_coef * distribution.entropy()
 
         loss = torch.mean(policy_advantages, dim=0)
+        # print(self._cfgs.algo_cfgs.entropy_coef)
         # loss -= self._cfgs.algo_cfgs.entropy_coef * distribution.entropy().mean()
-        entropy = torch.distributions.Categorical(prob).entropy().mean().item()
+        entropy = distribution.entropy().mean().item()
+
         if logger is None:
             self._logger.store(
                 {

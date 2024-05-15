@@ -41,7 +41,7 @@ defaults:
     # target kl divergence
     target_kl: 0.02
     # entropy coefficient
-    entropy_coef: 0.0
+    entropy_coef: 0.05
     # normalize reward
     reward_normalize: False
     # normalize cost

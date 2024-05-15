@@ -100,6 +100,8 @@ class KuhnPokerEnv(CMDP):
         self.betting_history_index = self.number_of_players + self.number_of_players * self.deck_size
         self.betting_round_offset = self.number_of_players * len(ActionType)
         self.env_spec_log = {'Env/nash_conv': 0.0}
+        for i in range(self.number_of_players):
+            self.env_spec_log[f'Env/player_improve_{i}'] = 0.0
         self.log_count = 0
 
     def set_seed(self, seed: int) -> None:
@@ -297,7 +299,10 @@ class KuhnPokerEnv(CMDP):
         pass
 
     def spec_log(self, logger, policy: list[ConstraintActorQCritic | DiscreteActor]) -> dict[str, Any]:
-        if self.log_count % 20 == 0:
+        if self.log_count % 50 == 0:
+            # print(self.env_spec_log)
+            if self.number_of_players > 2:
+                return
             if isinstance(policy[0], DiscreteActor):
                 model = policy
             else:
@@ -309,10 +314,14 @@ class KuhnPokerEnv(CMDP):
                                            state_transition=state_transition,
                                            infosets=obs_set) for i in range(self.number_of_players)]
             player_conv = [response.get_nash_conv() for response in response_policy]
+            for i in range(self.number_of_players):
+                self.env_spec_log[f'Env/player_improve_{i}'] = player_conv[i]
             nash_conv = sum(player_conv)
-            self.env_spec_log = {'Env/nash_conv': nash_conv}
-            print(player_conv)
+            self.env_spec_log['Env/nash_conv'] = nash_conv
+            # print(player_conv)
         logger.store({'Env/nash_conv': self.env_spec_log['Env/nash_conv']})
+        for i in range(self.number_of_players):
+            logger.store({f'Env/player_improve_{i}': self.env_spec_log[f'Env/player_improve_{i}']})
         self.log_count += 1
 
 # To record the information of the environment

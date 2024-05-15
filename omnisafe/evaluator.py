@@ -460,10 +460,10 @@ class Evaluator:  # pylint: disable=too-many-instance-attributes
                                     -1,  # to make sure the shape is (act_dim,)
                                 )
                                 total_act.append(act)
-                                print(self._actor[player_id](obs[player_id]))
-                                print(obs[player_id])
+                                # print(self._actor[player_id](obs[player_id]))
+                                # print(obs[player_id])
                             act = torch.as_tensor(total_act)
-                            print(act)
+                            # print(act)
                         else:
                             act = self._actor.predict(
                                 obs.reshape(
